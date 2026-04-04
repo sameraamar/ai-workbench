@@ -28,6 +28,25 @@ Before getting started, verify what GPU (if any) your system has:
 | **macOS** | `system_profiler SPDisplaysDataType` |
 | **Linux** | `lspci \| grep -i vga` or `nvidia-smi` (if NVIDIA drivers are installed) |
 
+### Verify PyTorch CUDA Support
+
+After installation, verify that PyTorch can access your GPU:
+
+```bash
+python -c "import torch; print('CUDA Available:', torch.cuda.is_available()); print('GPU Name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
+```
+
+**Expected output with working GPU:**
+```
+CUDA Available: True
+GPU Name: NVIDIA GeForce RTX 3090
+```
+
+If CUDA shows `False`, install CUDA-enabled PyTorch:
+```bash
+pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+```
+
 ### Measured CPU-Only Baseline
 
 These results were collected on a Windows machine with no CUDA GPU, using default FP32 weights and `max_new_tokens=192`:
@@ -41,22 +60,27 @@ These results were collected on a Windows machine with no CUDA GPU, using defaul
 
 ### Recommended GPU Tiers
 
-#### Gemma 4 E2B (smallest, lowest cost)
+**⚠️ IMPORTANT**: Gemma 4 models are larger than their names suggest:
+- **Gemma 4 E2B**: Actually ~5.1B parameters (9.5GB VRAM)
+- **Gemma 4 E4B**: Actually ~8-12B parameters (16GB+ VRAM)
 
-| GPU | VRAM | Expected text-rewrite latency | Notes |
-|---|---|---|---|
-| NVIDIA RTX 3060 12 GB | 12 GB | 2–5 seconds | Budget entry point, fits E2B in FP16 |
-| NVIDIA RTX 4060 Ti 16 GB | 16 GB | 1.5–4 seconds | More headroom for longer prompts |
-| NVIDIA T4 (cloud) | 16 GB | 2–5 seconds | Free tier on Colab, cheapest cloud option |
+#### Gemma 4 E2B (~5.1B parameters)
 
-#### Gemma 4 E4B (recommended default)
+| GPU | VRAM | Expected text-rewrite latency | Measured Performance | Notes |
+|---|---|---|---|---|
+| NVIDIA RTX 3060 12 GB | 12 GB | 8–15 seconds | Not tested | Tight fit in FP16, may need quantization |
+| NVIDIA RTX 3090 24 GB | 24 GB | 5–10 seconds | **7.4 tokens/sec** ✅ | **Verified performance**, comfortable fit |
+| NVIDIA RTX 4060 Ti 16 GB | 16 GB | 6–12 seconds | Not tested | Good fit with some headroom |
+| NVIDIA T4 (cloud) | 16 GB | 10–20 seconds | Not tested | Budget cloud option |
 
-| GPU | VRAM | Expected text-rewrite latency | Notes |
-|---|---|---|---|
-| NVIDIA RTX 4070 Ti 12 GB | 12 GB | 3–6 seconds | May need 8-bit quantization to fit |
-| NVIDIA RTX 3090 / 4080 | 16–24 GB | 2–5 seconds | Comfortable fit in FP16 |
-| NVIDIA A10G (cloud) | 24 GB | 2–4 seconds | Good cloud option, ~$0.75/hr spot |
-| NVIDIA L4 (cloud) | 24 GB | 2–4 seconds | Available on GCP, efficient inference card |
+#### Gemma 4 E4B (~8-12B parameters)
+
+| GPU | VRAM | Expected text-rewrite latency | Measured Performance | Notes |
+|---|---|---|---|---|
+| NVIDIA RTX 4070 Ti 12 GB | 12 GB | 15–25 seconds | Not tested | May need 8-bit quantization to fit |
+| NVIDIA RTX 3090 / 4080 | 16–24 GB | 8–15 seconds | Not tested | Should fit comfortably in FP16 |
+| NVIDIA A10G (cloud) | 24 GB | 10–18 seconds | Not tested | Good cloud option, ~$0.75/hr spot |
+| NVIDIA L4 (cloud) | 24 GB | 10–18 seconds | Not tested | Available on GCP, efficient inference card |
 
 #### Gemma 4 26B A4B / 31B (not recommended for low-cost)
 
@@ -85,14 +109,17 @@ AMD Radeon(TM) Graphics                     (integrated, not usable)
 - E4B in 4-bit (~4–5 GB) is possible but tight — may OOM on longer prompts.
 - Without quantization, this machine is **CPU-only territory** (~35–43 s per rewrite).
 
-#### Machine B — Desktop (RTX 3090, 24 GB VRAM)
+#### Machine B — Desktop (RTX 3090, 24 GB VRAM) ✅ **VERIFIED**
 
 ```
 NVIDIA GeForce RTX 3090   24 GB VRAM
 Intel(R) UHD Graphics 750 (integrated, not usable)
 ```
 
-- **Ideal for local interactive use.** Fits Gemma 4 E4B comfortably in FP16 with room to spare.
+- **✅ Verified Performance**: **7.4 tokens/sec** for Gemma 4 E2B (5.1B parameters)
+- **✅ Memory Usage**: 9.6GB VRAM for E2B model in FP16
+- **Ideal for local interactive use** - fits Gemma 4 E4B comfortably with room to spare
+- **No quantization needed** - runs full precision models efficiently
 - Expected text-rewrite latency: **2–5 seconds**.
 - Can also run E2B with headroom for longer contexts or multimodal inputs.
 - No quantization needed.
@@ -113,9 +140,15 @@ Intel(R) UHD Graphics 750 (integrated, not usable)
 - If `torch.cuda.is_available()` is `True`, models load with `device_map="auto"` and `bfloat16` precision — the GPU is used automatically.
 - If no CUDA GPU is found, models fall back to CPU with `float32`.
 
+**🔧 Advanced GPU Control:** For multi-GPU systems, specific GPU selection, or deployment across different machines, see [GPU Selection Guide](docs/gpu-selection-guide.md).
+
 You can verify CUDA is available before starting the server:
 
 ```bash
+# Quick verification using built-in script
+python verify_gpu_config.py
+
+# Or manual check  
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}, Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU\"}')"
 ```
 
@@ -216,9 +249,9 @@ pip install -r ui/requirements.txt
 
 # Copy and configure environment for each project
 cp model-serving/.env.example model-serving/.env
-# Edit model-serving/.env to set GEMMA_MODEL_ID and GEMMA_FASTAPI_GATEWAY
+# Defaults work out-of-box; edit model-serving/.env only if you need custom GPU/model settings
 cp ui/.env.example ui/.env
-# Edit ui/.env to set SERVING_URL if not using default http://localhost:8000
+# Defaults work out-of-box; edit ui/.env only if backend is not at http://localhost:8000
 
 # Start the model-serving API (terminal 1)
 cd model-serving
@@ -254,6 +287,7 @@ python playground/concurrency_simulation.py --registered-users 100 --active-requ
 
 - [docs/START_HERE.md](docs/START_HERE.md) — Project entrypoint and restart guide
 - [docs/tasks.md](docs/tasks.md) — Task tracking and phase status
+- [docs/gpu-selection-guide.md](docs/gpu-selection-guide.md) — GPU control and multi-system deployment
 - [docs/design/design.md](docs/design/design.md) — Architecture and design decisions
 - [docs/research/gemma4-serving-evaluation.md](docs/research/gemma4-serving-evaluation.md) — Model selection and serving research
 - [docs/research/low-cost-fastapi-blueprint.md](docs/research/low-cost-fastapi-blueprint.md) — Queue-first FastAPI blueprint design

@@ -18,19 +18,49 @@ SYSTEM_PROMPT = "You are a helpful assistant."
 
 
 def main() -> None:
+    print("=" * 60)
+    print("🚀 GEMMA 4 STANDALONE DEMO - CUDA TEST")
+    print("=" * 60)
+    
+    # CUDA Detection and Logging
+    print("\n🔍 CHECKING GPU/CUDA AVAILABILITY:")
+    print(f"   PyTorch Version: {torch.__version__}")
+    print(f"   CUDA Available: {torch.cuda.is_available()}")
+    
+    if torch.cuda.is_available():
+        print(f"   ✅ GPU Count: {torch.cuda.device_count()}")
+        print(f"   ✅ GPU Name: {torch.cuda.get_device_name(0)}")
+        print(f"   ✅ CUDA Version: {torch.version.cuda}")
+        print(f"   ✅ Model will use: GPU acceleration")
+        device_info = "🚀 CUDA GPU"
+    else:
+        print("   ❌ GPU Count: 0")
+        print("   ❌ GPU Name: N/A") 
+        print("   ❌ CUDA Version: Not Available")
+        print("   ⚠️  Model will use: CPU (SLOW!)")
+        device_info = "🐌 CPU ONLY"
+    
+    print(f"\n🔧 DEVICE MODE: {device_info}")
+    print("=" * 60)
+    
     load_started_at = perf_counter()
     memory_before_load = capture_memory_snapshot()
-    print(f"Loading processor for {MODEL_ID}...")
+    print(f"\n📦 Loading processor for {MODEL_ID}...")
     processor = AutoProcessor.from_pretrained(MODEL_ID)
 
-    print(f"Loading model for {MODEL_ID}...")
+    print(f"🧠 Loading model for {MODEL_ID}...")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        dtype=torch.bfloat16,
+        dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
         device_map="auto",
     )
+    
+    # Post-load device confirmation
+    actual_device = next(model.parameters()).device
+    print(f"✅ Model loaded on device: {actual_device}")
+    
     load_elapsed_seconds = perf_counter() - load_started_at
-    memory_after_load = capture_memory_snapshot(model.device)
+    memory_after_load = capture_memory_snapshot(actual_device)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
@@ -59,11 +89,11 @@ def main() -> None:
             add_generation_prompt=True,
             enable_thinking=False,
         )
-        inputs = processor(text=text, return_tensors="pt").to(model.device)
+        inputs = processor(text=text, return_tensors="pt").to(actual_device)
         input_len = inputs["input_ids"].shape[-1]
         prompt_char_count = len(text)
-        memory_before_generation = capture_memory_snapshot(model.device)
-        reset_peak_memory_stats(model.device)
+        memory_before_generation = capture_memory_snapshot(actual_device)
+        reset_peak_memory_stats(actual_device)
 
         print("Generating response...")
         started_at = perf_counter()
@@ -76,7 +106,7 @@ def main() -> None:
             max_new_tokens=MAX_NEW_TOKENS,
         )
         elapsed_seconds = perf_counter() - started_at
-        memory_after_generation = capture_memory_snapshot(model.device)
+        memory_after_generation = capture_memory_snapshot(actual_device)
 
         response = processor.decode(outputs[0][input_len:], skip_special_tokens=False)
         parsed_response = None
@@ -117,7 +147,7 @@ def main() -> None:
             "Memory: "
             f"RSS delta {format_optional_count(delta_mb(memory_before_generation.get('process_rss_bytes'), memory_after_generation.get('process_rss_bytes')))} MB"
         )
-        if model.device.type == "cuda":
+        if actual_device.type == "cuda":
             print(
                 "VRAM: "
                 f"allocated {format_optional_count(bytes_to_mb(memory_after_generation.get('cuda_allocated_bytes')))} MB | "

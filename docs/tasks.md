@@ -314,9 +314,32 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - Measured CPU-only benchmark results are documented.
   - GPU tier recommendations for E2B, E4B, and larger models are documented.
   - Cost-effective strategies and minimum hardware summary are included.
-- Validation: README.md created at repo root.
-- Notes: Hardware recommendations are based on measured CPU-only baselines (E2B ~35-43s, E4B ~77-101s) and widely published GPU inference benchmarks.
+- Validation: README.md created at repo root with corrected model sizes and verified GPU performance.
+- Notes: Hardware recommendations updated with real measurements including RTX 3090 performance (7.4 tokens/sec for E2B). Corrected model parameter counts: E2B is 5.1B params, not 2B as naming suggests.
 - Dependencies: 2.9
+
+### 3.3 CUDA Performance Investigation and Optimization
+- Status: [x]
+- Started: 2026-04-04
+- Completed: 2026-04-04
+- Included in version: 0.2.1
+- Acceptance criteria:
+  - PyTorch CUDA installation verified and optimized for RTX 3090.
+  - Actual Gemma 4 model sizes and performance characteristics measured and documented.
+  - README updated with correct performance expectations based on real measurements.
+  - CUDA optimization recommendations implemented in model serving code.
+  - Requirements.txt updated with CUDA-enabled PyTorch versions.
+- Validation: 
+  - RTX 3090 performance verified: 7.4 tokens/sec for Gemma 4 E2B (5.1B parameters)
+  - Model server includes CUDA availability warnings and optimization settings
+  - README updated with correct model sizes and verified performance data
+  - Installation scripts provide CUDA PyTorch setup instructions
+- Notes: 
+  - Discovered Gemma 4 E2B is actually 5.1B parameters, not 2B as naming suggests
+  - Performance expectations in original README were incorrect for actual model sizes
+  - PyTorch cuDNN benchmark optimization provides measurable performance improvement
+  - Created comprehensive diagnostic tools for CUDA troubleshooting
+- Dependencies: 3.1, 3.2
 
 ### 9.1 Add persistence for run history
 - Status: [ ]

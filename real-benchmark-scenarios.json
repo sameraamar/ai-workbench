@@ -1,0 +1,32 @@
+[
+  {
+    "name": "rewrite-e2b-real",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "iterations": 3,
+    "warmup_iterations": 1,
+    "metadata": {
+      "model_id": "google/gemma-4-E2B-it",
+      "max_new_tokens": 192,
+      "title": "Apple iPhone 15 Pro Max 256GB Unlocked",
+      "description": "Selling my gently used iPhone 15 Pro Max in excellent condition. 256GB storage, unlocked for all carriers. Comes with original box, charger, and screen protector already applied. No scratches or damage. Battery health at 98%. Perfect for anyone looking to upgrade!",
+      "marketplace": "ebay",
+      "category_hint": "electronics"
+    }
+  },
+  {
+    "name": "rewrite-e4b-real", 
+    "model_label": "Gemma 4 E4B",
+    "request_mode": "text-only", 
+    "iterations": 3,
+    "warmup_iterations": 1,
+    "metadata": {
+      "model_id": "google/gemma-4-E4B-it",
+      "max_new_tokens": 192,
+      "title": "Apple iPhone 15 Pro Max 256GB Unlocked",
+      "description": "Selling my gently used iPhone 15 Pro Max in excellent condition. 256GB storage, unlocked for all carriers. Comes with original box, charger, and screen protector already applied. No scratches or damage. Battery health at 98%. Perfect for anyone looking to upgrade!",
+      "marketplace": "ebay", 
+      "category_hint": "electronics"
+    }
+  }
+]

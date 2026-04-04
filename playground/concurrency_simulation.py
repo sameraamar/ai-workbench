@@ -7,9 +7,10 @@ import sys
 
 if __package__ in {None, ""}:
     PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-    if str(PACKAGE_ROOT) not in sys.path:
-        sys.path.insert(0, str(PACKAGE_ROOT))
-    from gemma_serving_research.simulation import simulate_capacity
+    MODEL_SERVING_SRC = PACKAGE_ROOT / "model-serving" / "src"
+    if str(MODEL_SERVING_SRC) not in sys.path:
+        sys.path.insert(0, str(MODEL_SERVING_SRC))
+    from gemma_serving.simulation import simulate_capacity
 else:
     from .simulation import simulate_capacity
 

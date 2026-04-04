@@ -16,6 +16,65 @@ from transformers import AutoModelForCausalLM, AutoModelForMultimodalLM, AutoPro
 
 from gemma_serving.config import ServingConfig, GenerationSettings
 
+
+def _apply_model_optimizations(model: Any, config: ServingConfig) -> Any:
+    """Apply performance optimizations to the loaded model."""
+    LOGGER = logging.getLogger(__name__)
+    
+    if not config.optimize_for_inference:
+        return model
+    
+    optimizations_applied = []
+    
+    # Enable inference mode optimizations
+    if hasattr(model, 'eval'):
+        model.eval()
+        optimizations_applied.append("eval_mode")
+    
+    # Enable memory optimizations
+    if config.enable_memory_optimizations:
+        if hasattr(torch.backends, 'cudnn'):
+            torch.backends.cudnn.benchmark = True
+            optimizations_applied.append("cudnn_benchmark")
+        
+        # Enable memory efficient attention if available
+        if hasattr(torch.nn.functional, 'scaled_dot_product_attention'):
+            optimizations_applied.append("sdpa_attention")
+    
+    # Enable Flash Attention if available
+    if config.enable_flash_attention:
+        try:
+            # Try to enable Flash Attention 2 if available
+            if hasattr(model.config, 'attn_implementation'):
+                model.config.attn_implementation = "flash_attention_2"
+                optimizations_applied.append("flash_attention_2")
+        except Exception as e:
+            LOGGER.debug(f"Flash Attention not available: {e}")
+    
+    # Apply torch.compile() optimization
+    if config.enable_torch_compile:
+        try:
+            import torch._dynamo as dynamo
+            if hasattr(torch, 'compile') and torch.cuda.is_available():
+                # Only compile on CUDA for better performance 
+                LOGGER.info(f"🔧 Applying torch.compile() with mode: {config.torch_compile_mode}")
+                model = torch.compile(
+                    model, 
+                    mode=config.torch_compile_mode,
+                    dynamic=False,  # Static shapes for better performance
+                    fullgraph=False  # Allow graph breaks for compatibility
+                )
+                optimizations_applied.append(f"torch_compile_{config.torch_compile_mode}")
+        except Exception as e:
+            LOGGER.warning(f"⚠️  torch.compile() failed: {e}")
+    
+    if optimizations_applied:
+        LOGGER.info(f"✅ Applied optimizations: {', '.join(optimizations_applied)}")
+    else:
+        LOGGER.info("ℹ️  No additional optimizations applied")
+    
+    return model
+
 LOGGER = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, float, str], None]
 TokenCallback = Callable[[str], None]
@@ -284,16 +343,37 @@ class GemmaService:
 
         with self._lock:
             if self._processor is None or self._text_model is None:
+                # CUDA Warning for Model Loading
+                if not torch.cuda.is_available():
+                    LOGGER.warning("")
+                    LOGGER.warning("⚠️  🐌 CUDA NOT AVAILABLE - MODEL WILL RUN ON CPU!")
+                    LOGGER.warning("⚠️  Expect very slow inference (30-100+ seconds per request)")
+                    LOGGER.warning("⚠️  Install CUDA PyTorch for GPU acceleration")
+                    LOGGER.warning("")
+                else:
+                    LOGGER.info(f"✅ CUDA Available - Model will use GPU: {torch.cuda.get_device_name(0)}")
+                
                 dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
                 self._emit(progress_callback, "runtime", 0.06, "Checking Gemma runtime state...")
                 self._ensure_processor(progress_callback)
                 quant_label = " (4-bit quantized)" if self._config.quantize_4bit else ""
-                self._emit(progress_callback, "model", 0.34, f"Loading Gemma text weights{quant_label}. The first run may download several GB and take a few minutes...")
+                device_label = "GPU" if torch.cuda.is_available() else "CPU"
+                self._emit(progress_callback, "model", 0.34, f"Loading Gemma text weights on {device_label}{quant_label}. The first run may download several GB and take a few minutes...")
                 self._text_model = AutoModelForCausalLM.from_pretrained(
                     self._config.model_id,
-                    **_build_model_load_kwargs(dtype, quantize_4bit=self._config.quantize_4bit, force_download=self._config.force_download),
+                    **_build_model_load_kwargs(dtype, quantize_4bit=self._config.quantize_4bit, force_download=self._config.force_download, config=self._config),
                 )
-                self._text_model.eval()
+                
+                # Apply performance optimizations
+                self._text_model = _apply_model_optimizations(self._text_model, self._config)
+                
+                # Log actual device after loading
+                actual_device = next(self._text_model.parameters()).device
+                if actual_device.type == "cuda":
+                    LOGGER.info(f"✅ Text model loaded successfully on {actual_device}")
+                else:
+                    LOGGER.warning(f"⚠️  Text model loaded on {actual_device} (CPU) - Performance will be very slow!")
+                
                 self._emit(progress_callback, "model", 0.62, "Text runtime loaded.")
         return self._processor, self._text_model
 
@@ -304,17 +384,39 @@ class GemmaService:
 
         with self._lock:
             if self._processor is None or self._multimodal_model is None:
+                # CUDA Warning for Multimodal Model Loading
+                if not torch.cuda.is_available():
+                    LOGGER.warning("")
+                    LOGGER.warning("⚠️  🐌 CUDA NOT AVAILABLE - MULTIMODAL MODEL WILL RUN ON CPU!")
+                    LOGGER.warning("⚠️  Expect extremely slow inference for image processing")
+                    LOGGER.warning("⚠️  Install CUDA PyTorch for GPU acceleration")
+                    LOGGER.warning("")
+                else:
+                    LOGGER.info(f"✅ CUDA Available - Multimodal model will use GPU: {torch.cuda.get_device_name(0)}")
+                
                 dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
                 self._emit(progress_callback, "runtime", 0.06, "Checking Gemma runtime state...")
                 self._ensure_processor(progress_callback)
                 quant_label = " (4-bit quantized)" if self._config.quantize_4bit else ""
-                self._emit(progress_callback, "model", 0.34, f"Loading Gemma multimodal weights{quant_label}. The first run may download several GB and take a few minutes...")
+                device_label = "GPU" if torch.cuda.is_available() else "CPU"
+                self._emit(progress_callback, "model", 0.34, f"Loading Gemma multimodal weights on {device_label}{quant_label}. The first run may download several GB and take a few minutes...")
                 self._multimodal_model = _load_multimodal_model(
                     self._config.model_id, dtype,
                     quantize_4bit=self._config.quantize_4bit,
                     force_download=self._config.force_download,
+                    config=self._config,
                 )
-                self._multimodal_model.eval()
+                
+                # Apply performance optimizations  
+                self._multimodal_model = _apply_model_optimizations(self._multimodal_model, self._config)
+                
+                # Log actual device after loading
+                actual_device = next(self._multimodal_model.parameters()).device
+                if actual_device.type == "cuda":
+                    LOGGER.info(f"✅ Multimodal model loaded successfully on {actual_device}")
+                else:
+                    LOGGER.warning(f"⚠️  Multimodal model loaded on {actual_device} (CPU) - Performance will be very slow!")
+                
                 self._emit(progress_callback, "model", 0.62, "Multimodal runtime loaded.")
         return self._processor, self._multimodal_model
 
@@ -356,7 +458,7 @@ def _resolve_model_device(model: Any) -> torch.device:
     return torch.device("cpu")
 
 
-def _load_multimodal_model(model_id: str, dtype: torch.dtype, *, quantize_4bit: bool = False, force_download: bool = False):
+def _load_multimodal_model(model_id: str, dtype: torch.dtype, *, quantize_4bit: bool = False, force_download: bool = False, config: ServingConfig | None = None):
     model_loaders = (
         Gemma4ForConditionalGeneration,
         AutoModelForMultimodalLM,
@@ -368,7 +470,7 @@ def _load_multimodal_model(model_id: str, dtype: torch.dtype, *, quantize_4bit: 
             LOGGER.info("Trying model loader: %s", model_loader.__name__)
             return model_loader.from_pretrained(
                 model_id,
-                **_build_model_load_kwargs(dtype, quantize_4bit=quantize_4bit, force_download=force_download),
+                **_build_model_load_kwargs(dtype, quantize_4bit=quantize_4bit, force_download=force_download, config=config),
             )
         except Exception as error:  # pragma: no cover - fallback path
             last_error = error
@@ -607,7 +709,7 @@ def _get_process_rss_posix() -> int | None:
         return None
 
 
-def _build_model_load_kwargs(dtype: torch.dtype, *, quantize_4bit: bool = False, force_download: bool = False) -> dict[str, Any]:
+def _build_model_load_kwargs(dtype: torch.dtype, *, quantize_4bit: bool = False, force_download: bool = False, config: ServingConfig | None = None) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"low_cpu_mem_usage": True}
     if force_download:
         kwargs["force_download"] = True
@@ -621,6 +723,46 @@ def _build_model_load_kwargs(dtype: torch.dtype, *, quantize_4bit: bool = False,
         )
     else:
         kwargs["dtype"] = dtype
-    if torch.cuda.is_available():
+    
+    # Flash Attention Configuration
+    if config and config.enable_flash_attention and torch.cuda.is_available():
+        try:
+            # Try to import flash_attn to check if it's available
+            import flash_attn
+            kwargs["attn_implementation"] = "flash_attention_2"
+            LOGGER.info("🔧 Enabling Flash Attention 2 for model loading")
+        except ImportError:
+            # Fall back to eager attention if flash attention is not available
+            kwargs["attn_implementation"] = "eager"
+            LOGGER.info("ℹ️  Flash Attention not available, using eager attention")
+    
+    # Memory optimization settings
+    if config and config.enable_memory_optimizations:
+        # Note: use_cache is for generation, not model loading
+        pass
+        
+    # GPU Selection Logic
+    if config and config.force_cpu:
+        # Force CPU mode
+        kwargs["device_map"] = "cpu"
+        LOGGER.info("🔧 Forcing CPU-only mode via configuration")
+    elif config and config.gpu_id is not None:
+        # Use specific GPU
+        if torch.cuda.is_available() and config.gpu_id < torch.cuda.device_count():
+            kwargs["device_map"] = {"":config.gpu_id}
+            LOGGER.info(f"🔧 Using GPU {config.gpu_id}: {torch.cuda.get_device_name(config.gpu_id)}")
+        else:
+            LOGGER.warning(f"⚠️  GPU {config.gpu_id} not available, falling back to auto")
+            kwargs["device_map"] = "auto" if torch.cuda.is_available() else "cpu"
+    elif config and config.device_map != "auto":
+        # Custom device mapping
+        kwargs["device_map"] = config.device_map
+        LOGGER.info(f"🔧 Using custom device map: {config.device_map}")
+    elif torch.cuda.is_available():
+        # Default auto mode
         kwargs["device_map"] = "auto"
+    else:
+        # No CUDA available, use CPU
+        kwargs["device_map"] = "cpu"
+    
     return kwargs

@@ -233,6 +233,28 @@ def create_low_cost_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        # CUDA Environment Check at Startup
+        import torch
+        print("\n" + "=" * 70)
+        print("🚀 GEMMA MODEL SERVING - GPU/CUDA STATUS")
+        print("=" * 70)
+        print(f"PyTorch Version: {torch.__version__}")
+        print(f"CUDA Available: {torch.cuda.is_available()}")
+        
+        if torch.cuda.is_available():
+            print(f"✅ GPU Count: {torch.cuda.device_count()}")
+            print(f"✅ GPU Name: {torch.cuda.get_device_name(0)}")
+            print(f"✅ CUDA Version: {torch.version.cuda}")
+            print("✅ STATUS: GPU acceleration ENABLED 🚀")
+        else:
+            print("❌ GPU Count: 0")
+            print("❌ GPU Name: N/A")
+            print("❌ CUDA Version: Not Available")
+            print("⚠️  WARNING: Running on CPU ONLY - Expect VERY SLOW inference! 🐌")
+            print("   💡 Install CUDA-enabled PyTorch: pip install torch --index-url https://download.pytorch.org/whl/cu121")
+        
+        print("=" * 70 + "\n")
+        
         runtime.start()
         yield
         runtime.stop()
