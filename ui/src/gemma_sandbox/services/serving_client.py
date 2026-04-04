@@ -12,6 +12,7 @@ ProgressCallback = Callable[[str, float, str], None]
 
 DEFAULT_SERVING_URL = "http://localhost:8000"
 GENERATE_TIMEOUT_SECONDS = 300.0
+MODEL_LOAD_TIMEOUT_SECONDS = 600.0
 
 
 class ServingClient:
@@ -31,10 +32,31 @@ class ServingClient:
         except Exception:
             return False
 
+    def get_active_model_id(self) -> str | None:
+        try:
+            health = self.health()
+            return health.get("active_model_id")
+        except Exception:
+            return None
+
+    def is_model_ready(self) -> bool:
+        try:
+            health = self.health()
+            return health.get("model_loaded", False) is True
+        except Exception:
+            return False
+
+    def load_model(self, model_id: str) -> dict[str, Any]:
+        with httpx.Client(base_url=self._base_url, timeout=MODEL_LOAD_TIMEOUT_SECONDS) as client:
+            response = client.post("/models/load", json={"model_id": model_id})
+            response.raise_for_status()
+            return response.json()
+
     def generate(
         self,
         messages: list[dict[str, Any]],
         *,
+        model_id: str | None = None,
         max_new_tokens: int = 256,
         temperature: float = 1.0,
         top_p: float = 0.95,
@@ -55,6 +77,8 @@ class ServingClient:
             "enable_thinking": enable_thinking,
             "stream_output": False,
         }
+        if model_id is not None:
+            payload["model_id"] = model_id
 
         with httpx.Client(base_url=self._base_url, timeout=GENERATE_TIMEOUT_SECONDS) as client:
             response = client.post("/generate", json=payload)

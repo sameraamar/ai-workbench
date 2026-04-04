@@ -34,10 +34,18 @@ class SandboxService:
         self._last_health_ok = healthy
         return healthy
 
+    def is_model_ready(self) -> bool:
+        return self._client.is_model_ready()
+
+    def get_active_model_id(self) -> str | None:
+        return self._client.get_active_model_id()
+
+    def load_model(self, model_id: str) -> dict:
+        return self._client.load_model(model_id)
+
     def run(
         self,
         ability: Ability,
-        preset_name: str,
         user_prompt: str,
         uploaded_path: Path | None = None,
         frame_paths: list[Path] | None = None,
@@ -48,30 +56,31 @@ class SandboxService:
         spec = self.get_ability_spec(ability)
         was_cold_start = not (self._last_health_ok or False)
         if ability is Ability.TEXT_TO_TEXT:
-            prompt = build_text_prompt(user_prompt, preset_name)
+            prompt = build_text_prompt(user_prompt)
             messages = _conversation_messages(self._config.system_prompt, prior_messages, prompt)
         elif ability is Ability.IMAGE_TO_TEXT:
             if uploaded_path is None:
                 raise ValueError("Image-to-text requires an image upload.")
-            prompt = build_image_prompt(user_prompt, preset_name)
+            prompt = build_image_prompt(user_prompt)
             messages = _image_messages(self._config.system_prompt, prompt, uploaded_path)
         elif ability is Ability.AUDIO_TO_TEXT:
             if uploaded_path is None:
                 raise ValueError("Audio-to-text requires an audio upload.")
-            prompt = build_audio_prompt(user_prompt, preset_name)
+            prompt = build_audio_prompt(user_prompt)
             messages = _audio_messages(self._config.system_prompt, prompt, uploaded_path)
         elif ability is Ability.VIDEO_TO_TEXT:
             if not frame_paths:
                 raise ValueError("Video-to-text requires sampled frames.")
-            prompt = build_video_prompt(user_prompt, preset_name)
+            prompt = build_video_prompt(user_prompt)
             messages = _video_messages(self._config.system_prompt, prompt, frame_paths)
         else:
-            prompt = build_simulation_prompt(ability, user_prompt, preset_name)
+            prompt = build_simulation_prompt(ability, user_prompt)
             messages = _conversation_messages(self._config.system_prompt, prior_messages, prompt)
 
         settings = self._config.generation
         response = self._client.generate(
             messages,
+            model_id=self._config.model_id,
             max_new_tokens=settings.max_new_tokens,
             temperature=settings.temperature,
             top_p=settings.top_p,

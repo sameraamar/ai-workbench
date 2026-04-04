@@ -18,6 +18,16 @@ Each project has its own `requirements.txt`, `.env.example`, and `PYTHONPATH` ro
 
 Gemma 4 inference performance depends heavily on having a CUDA-capable GPU. CPU-only inference is functional but too slow for interactive or production use.
 
+### Check Your GPU
+
+Before getting started, verify what GPU (if any) your system has:
+
+| OS | Command |
+|---|---|
+| **Windows (PowerShell)** | `Get-CimInstance Win32_VideoController \| Select-Object Name, AdapterRAM, DriverVersion` |
+| **macOS** | `system_profiler SPDisplaysDataType` |
+| **Linux** | `lspci \| grep -i vga` or `nvidia-smi` (if NVIDIA drivers are installed) |
+
 ### Measured CPU-Only Baseline
 
 These results were collected on a Windows machine with no CUDA GPU, using default FP32 weights and `max_new_tokens=192`:
@@ -61,6 +71,32 @@ These models require 40–80 GB VRAM (A100, H100 class) and are not practical fo
 5. **Keep image analysis asynchronous.** Multimodal requests are 2–3× slower than text-only; queue them as background jobs.
 6. **Cache repeated rewrites.** The FastAPI blueprint includes an in-memory cache to avoid re-running identical requests.
 
+### Example Machine Setups
+
+#### Machine A — Laptop (RTX 2000 Ada, 8 GB VRAM)
+
+```
+NVIDIA RTX 2000 Ada Generation Laptop GPU   8 GB VRAM
+AMD Radeon(TM) Graphics                     (integrated, not usable)
+```
+
+- **Below the 12 GB minimum** for even the smallest model (E2B) in FP16.
+- With **4-bit quantization** (`GEMMA_QUANTIZE_4BIT=1`), E2B drops to ~1.5–2 GB VRAM and **fits comfortably**. See [4-Bit Quantization](#4-bit-quantization) below.
+- E4B in 4-bit (~4–5 GB) is possible but tight — may OOM on longer prompts.
+- Without quantization, this machine is **CPU-only territory** (~35–43 s per rewrite).
+
+#### Machine B — Desktop (RTX 3090, 24 GB VRAM)
+
+```
+NVIDIA GeForce RTX 3090   24 GB VRAM
+Intel(R) UHD Graphics 750 (integrated, not usable)
+```
+
+- **Ideal for local interactive use.** Fits Gemma 4 E4B comfortably in FP16 with room to spare.
+- Expected text-rewrite latency: **2–5 seconds**.
+- Can also run E2B with headroom for longer contexts or multimodal inputs.
+- No quantization needed.
+
 ### Minimum Hardware Summary
 
 | Deployment Goal | Minimum GPU | Minimum VRAM | Model |
@@ -69,6 +105,102 @@ These models require 40–80 GB VRAM (A100, H100 class) and are not practical fo
 | Local interactive use | RTX 3090 / 4080 | 16–24 GB | E4B |
 | Cloud serving (low cost) | T4 / L4 | 16–24 GB | E2B or E4B |
 | Production 100-user serving | Multiple L4 / A10G workers | 24 GB each | E4B |
+
+### GPU Detection & Usage
+
+**No manual flags needed.** The model-serving backend auto-detects CUDA GPUs at load time:
+
+- If `torch.cuda.is_available()` is `True`, models load with `device_map="auto"` and `bfloat16` precision — the GPU is used automatically.
+- If no CUDA GPU is found, models fall back to CPU with `float32`.
+
+You can verify CUDA is available before starting the server:
+
+```bash
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}, Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU\"}')"
+```
+
+If this prints `CUDA available: False` despite having an NVIDIA GPU, ensure you have the correct [PyTorch CUDA build](https://pytorch.org/get-started/locally/) installed (`pip install torch --index-url https://download.pytorch.org/whl/cu124`).
+
+### 4-Bit Quantization
+
+The model-serving backend supports NF4 quantization via [bitsandbytes](https://github.com/TimDettmers/bitsandbytes), which reduces VRAM usage by ~4× at a small quality cost. This is how lower-VRAM GPUs (8–12 GB) can run models that would otherwise not fit.
+
+**Enable it** by setting the `GEMMA_QUANTIZE_4BIT` environment variable before starting the server:
+
+```powershell
+# PowerShell
+$env:GEMMA_QUANTIZE_4BIT = "1"
+uvicorn gemma_serving.app:app
+```
+
+```bash
+# bash / zsh
+GEMMA_QUANTIZE_4BIT=1 uvicorn gemma_serving.app:app
+```
+
+**Prerequisite:** install `bitsandbytes`:
+
+```bash
+pip install bitsandbytes
+```
+
+**Approximate VRAM usage with 4-bit quantization:**
+
+| Model | FP16 VRAM | 4-bit NF4 VRAM | Fits on 8 GB GPU? |
+|---|---|---|---|
+| Gemma 4 E2B | ~5–6 GB | ~1.5–2 GB | Yes |
+| Gemma 4 E4B | ~9–10 GB | ~4–5 GB | Tight, may OOM on long prompts |
+
+**How it works** (`gemma_service.py` → `_build_model_load_kwargs`):
+- When `GEMMA_QUANTIZE_4BIT=1`, a `BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")` is passed to `from_pretrained()`.
+- Compute dtype remains `bfloat16` on CUDA, so inference math stays in half-precision while weights are stored in 4-bit.
+- `device_map="auto"` still applies — the GPU is used automatically.
+
+## Screenshots
+
+### Main View — Text-to-Text Mode
+Sidebar shows the **Load Model** button, **Assistant persona** dropdown, and editable **System prompt**. The Run Sandbox button stays disabled until a model is loaded.
+
+![Gemma Sandbox Arena — main view with text-to-text mode, Load Model button, and persona-driven system prompt](docs/screenshots/ui-main-view.png)
+
+### Conversation Mode
+Enabling **Conversation mode** replaces the prompt box with a chat input that keeps prior turns in context. The "Clear conversation" button resets the thread.
+
+![Gemma Sandbox Arena — conversation mode with chat input and turn counter](docs/screenshots/ui-conversation-mode.png)
+
+### Image-to-Text Mode with Upload
+Switching the ability to **Image To Text** shows a file uploader for PNG/JPG/JPEG/WEBP images alongside the prompt.
+
+![Gemma Sandbox Arena — image-to-text mode with file upload](docs/screenshots/ui-image-mode.png)
+
+## Tests
+
+All tests pass on Python 3.9+.
+
+**UI tests** (5/5 passed):
+```
+tests/test_prompts.py::test_text_prompt_returns_user_input              PASSED
+tests/test_prompts.py::test_persona_presets_include_concise_instruction PASSED
+tests/test_prompts.py::test_simulation_prompt_marks_non_native_mode     PASSED
+tests/test_prompts.py::test_ability_specs_label_simulated_modes         PASSED
+tests/test_sandbox_service.py::test_text_run_includes_prior_conversation_messages PASSED
+```
+
+**Model-serving tests** (14/14 passed — tests requiring `torch`/GPU skipped locally):
+```
+tests/test_benchmarking.py::test_run_benchmark_returns_summary          PASSED
+tests/test_benchmarking.py::test_load_scenarios_parses_request_mode     PASSED
+tests/test_benchmarking.py::test_simulate_capacity_returns_e2b_and_e4b  PASSED
+tests/test_planning.py::test_traffic_profile_exposes_concurrency        PASSED
+tests/test_planning.py::test_estimate_concurrent_requests               PASSED
+tests/test_planning.py::test_estimate_worker_throughput                 PASSED
+tests/test_planning.py::test_estimate_required_workers_rounds_up        PASSED
+tests/test_planning.py::test_estimate_cost_per_request                  PASSED
+tests/test_planning.py::test_estimate_concurrent_requests_validates_inputs PASSED (x3)
+tests/test_planning.py::test_estimate_worker_throughput_validates_latency PASSED
+tests/test_planning.py::test_estimate_required_workers_validates_inputs  PASSED
+tests/test_planning.py::test_estimate_cost_per_request_validates_inputs  PASSED
+```
 
 ## Quick Start
 

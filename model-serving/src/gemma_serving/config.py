@@ -10,7 +10,7 @@ FORCE_DOWNLOAD: bool = os.getenv("GEMMA_FORCE_DOWNLOAD", "0").strip().lower() in
 QUANTIZE_4BIT: bool = os.getenv("GEMMA_QUANTIZE_4BIT", "0").strip().lower() in ("1", "true", "yes")
 
 
-@dataclass(slots=True)
+@dataclass
 class GenerationSettings:
     temperature: float = 1.0
     top_p: float = 0.95
@@ -20,7 +20,7 @@ class GenerationSettings:
     stream_output: bool = True
 
 
-@dataclass(slots=True)
+@dataclass
 class ServingConfig:
     model_id: str = field(default_factory=lambda: DEFAULT_MODEL_ID)
     generation: GenerationSettings = field(default_factory=GenerationSettings)

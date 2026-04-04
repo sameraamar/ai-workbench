@@ -1,16 +1,23 @@
 from gemma_sandbox.domain import Ability
-from gemma_sandbox.prompts import ABILITY_SPECS, build_simulation_prompt, build_text_prompt
+from gemma_sandbox.prompts import ABILITY_SPECS, PERSONA_PRESETS, build_simulation_prompt, build_text_prompt
 
 
-def test_text_prompt_includes_selected_preset() -> None:
-    prompt = build_text_prompt("Summarize this scene.", "Incident Desk")
+def test_text_prompt_returns_user_input() -> None:
+    prompt = build_text_prompt("Summarize this scene.")
 
-    assert "operations room" in prompt
-    assert "Summarize this scene." in prompt
+    assert prompt == "Summarize this scene."
+
+
+def test_persona_presets_include_concise_instruction() -> None:
+    for name, text in PERSONA_PRESETS.items():
+        if name == "Custom":
+            assert text == ""
+        else:
+            assert "Answer shortly unless requested to elaborate" in text
 
 
 def test_simulation_prompt_marks_non_native_mode() -> None:
-    prompt = build_simulation_prompt(Ability.TEXT_TO_VIDEO, "Create a teaser for a robot race.", "Creator Studio")
+    prompt = build_simulation_prompt(Ability.TEXT_TO_VIDEO, "Create a teaser for a robot race.")
 
     assert "This mode is a simulation" in prompt
     assert "text-to-video" in prompt

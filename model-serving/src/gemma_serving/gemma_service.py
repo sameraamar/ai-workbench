@@ -39,6 +39,10 @@ class GemmaService:
     def is_model_loaded(self) -> bool:
         return self._processor is not None and (self._text_model is not None or self._multimodal_model is not None)
 
+    def ensure_loaded(self) -> None:
+        """Pre-load the text runtime so the first generate call is fast."""
+        self._get_text_runtime()
+
     def generate(
         self,
         messages: list[dict[str, Any]],

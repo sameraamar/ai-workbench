@@ -36,6 +36,7 @@ class AttributeExtractionRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     messages: list[dict[str, Any]]
+    model_id: str | None = None
     max_new_tokens: int = Field(default=256, ge=1, le=8192)
     temperature: float = Field(default=1.0, ge=0.0)
     top_p: float = Field(default=0.95, ge=0.0, le=1.0)
@@ -50,6 +51,16 @@ class GenerateResponse(BaseModel):
     output_token_count: int | None = None
     total_token_count: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LoadModelRequest(BaseModel):
+    model_id: str = Field(min_length=1)
+
+
+class LoadModelResponse(BaseModel):
+    model_id: str
+    status: str
+    message: str
 
 
 class JobAcceptedResponse(BaseModel):
@@ -229,30 +240,55 @@ def create_low_cost_app(
     app = FastAPI(title="Gemma Model Serving", lifespan=lifespan)
 
     _gemma_service = gemma_service
+    _active_model_id: str | None = None
 
-    def _get_gemma_service():
-        nonlocal _gemma_service
-        if _gemma_service is None:
-            from gemma_serving.config import ServingConfig
-            from gemma_serving.gemma_service import GemmaService
+    def _get_gemma_service(model_id: str | None = None):
+        nonlocal _gemma_service, _active_model_id
+        from gemma_serving.config import ServingConfig
+        from gemma_serving.gemma_service import GemmaService
 
-            _gemma_service = GemmaService(ServingConfig())
+        if model_id and model_id != _active_model_id:
+            _gemma_service = GemmaService(ServingConfig(model_id=model_id))
+            _active_model_id = model_id
+        elif _gemma_service is None:
+            config = ServingConfig()
+            _gemma_service = GemmaService(config)
+            _active_model_id = config.model_id
         return _gemma_service
 
     @app.get("/health")
     def health() -> dict[str, Any]:
+        service = _gemma_service
         return {
             "status": "ok",
+            "active_model_id": _active_model_id,
+            "model_loaded": service is not None and service.is_model_loaded(),
             "queue_size": runtime.queue_size(),
             "cache_enabled": runtime._config.enable_cache,
             "gateway": runtime.gateway_name(),
         }
 
+    @app.post("/models/load", response_model=LoadModelResponse)
+    def load_model(request: LoadModelRequest) -> LoadModelResponse:
+        service = _get_gemma_service(request.model_id)
+        try:
+            service.ensure_loaded()
+            return LoadModelResponse(
+                model_id=request.model_id,
+                status="ready",
+                message=f"Model {request.model_id} loaded and ready.",
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load model {request.model_id}: {error}",
+            )
+
     @app.post("/generate", response_model=GenerateResponse)
     def generate(request: GenerateRequest) -> GenerateResponse:
         from gemma_serving.config import GenerationSettings
 
-        service = _get_gemma_service()
+        service = _get_gemma_service(request.model_id)
         settings = GenerationSettings(
             temperature=request.temperature,
             top_p=request.top_p,

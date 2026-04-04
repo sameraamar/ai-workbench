@@ -9,8 +9,9 @@ def test_text_run_includes_prior_conversation_messages(monkeypatch) -> None:
     service = SandboxService(AppConfig())
     captured: dict[str, object] = {}
 
-    def fake_generate(messages, *, max_new_tokens=256, temperature=1.0, top_p=0.95, top_k=64, enable_thinking=False, progress_callback=None, token_callback=None):
+    def fake_generate(messages, *, model_id=None, max_new_tokens=256, temperature=1.0, top_p=0.95, top_k=64, enable_thinking=False, progress_callback=None, token_callback=None):
         captured["messages"] = messages
+        captured["model_id"] = model_id
         return {
             "text": "Follow-up answer",
             "input_token_count": 10,
@@ -29,7 +30,6 @@ def test_text_run_includes_prior_conversation_messages(monkeypatch) -> None:
 
     result = service.run(
         ability=Ability.TEXT_TO_TEXT,
-        preset_name="Freeplay",
         user_prompt="Second question",
         prior_messages=prior_messages,
     )

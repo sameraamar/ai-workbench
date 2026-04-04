@@ -19,7 +19,7 @@ MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 
 
-@dataclass(slots=True)
+@dataclass
 class GenerationSettings:
     temperature: float = 1.0
     top_p: float = 0.95
@@ -29,7 +29,7 @@ class GenerationSettings:
     stream_output: bool = True
 
 
-@dataclass(slots=True)
+@dataclass
 class AppConfig:
     model_id: str = field(default_factory=lambda: DEFAULT_MODEL_ID)
     system_prompt: str = field(default_factory=lambda: DEFAULT_SYSTEM_PROMPT)

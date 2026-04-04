@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 
 
-class Ability(StrEnum):
+class Ability(str, Enum):
     TEXT_TO_TEXT = "text-to-text"
     IMAGE_TO_TEXT = "image-to-text"
     TEXT_TO_IMAGE = "text-to-image"
@@ -14,7 +14,7 @@ class Ability(StrEnum):
     TEXT_TO_AUDIO = "text-to-audio"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class AbilitySpec:
     ability: Ability
     label: str
@@ -22,7 +22,7 @@ class AbilitySpec:
     summary: str
 
 
-@dataclass(slots=True)
+@dataclass
 class RunResult:
     title: str
     support_level: str

@@ -19,7 +19,7 @@ if str(SRC_DIR) not in sys.path:
 from gemma_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, MODEL_OPTIONS, SERVING_URL
 from gemma_sandbox.domain import Ability
 from gemma_sandbox.media import extract_video_frames, persist_upload
-from gemma_sandbox.prompts import SIMULATOR_PRESETS
+from gemma_sandbox.prompts import PERSONA_PRESETS
 from gemma_sandbox.services.sandbox_service import SandboxService
 
 logging.basicConfig(
@@ -109,10 +109,9 @@ def _conversation_key(
     *,
     ability: Ability,
     model_id: str,
-    preset_name: str,
     system_prompt: str,
 ) -> str:
-    return "|".join((ability.value, model_id, preset_name, system_prompt.strip()))
+    return "|".join((ability.value, model_id, system_prompt.strip()))
 
 
 def _get_model_history_store() -> dict[str, list[dict]]:
@@ -198,6 +197,31 @@ def main() -> None:
             model_id = st.text_input("Custom model ID", value=DEFAULT_MODEL_ID)
         else:
             model_id = dict(MODEL_OPTIONS)[selected_model_label]
+
+        # --- Model load control ---
+        _server_model_id = st.session_state.get("_loaded_model_id")
+        _model_ready = st.session_state.get("_model_ready", False)
+        model_changed = model_id != _server_model_id
+        if model_changed:
+            _model_ready = False
+            st.session_state["_model_ready"] = False
+
+        load_col, status_col = st.columns([0.5, 0.5])
+        with load_col:
+            load_clicked = st.button(
+                "Load Model",
+                type="primary",
+                use_container_width=True,
+                disabled=_model_ready and not model_changed,
+            )
+        with status_col:
+            if _model_ready and not model_changed:
+                st.success("Ready", icon="\u2705")
+            elif _server_model_id and model_changed:
+                st.warning("Changed", icon="\u26A0\uFE0F")
+            else:
+                st.info("Not loaded", icon="\u23F3")
+
         ability = Ability(
             st.selectbox(
                 "Choose ability",
@@ -212,9 +236,20 @@ def main() -> None:
             disabled=not conversation_supported,
             help="Keep prior text turns in context for follow-up questions. Currently available for text and simulated text modes.",
         )
-        preset_name = st.selectbox("Simulator preset", options=list(SIMULATOR_PRESETS))
-        st.caption("Simulator preset changes the preset instruction that is prepended to the task prompt. It is separate from the system prompt.")
-        system_prompt = st.text_area("System prompt", value=DEFAULT_SYSTEM_PROMPT, height=120)
+        preset_name = st.selectbox("Assistant persona", options=list(PERSONA_PRESETS))
+        preset_text = PERSONA_PRESETS[preset_name]
+        if "_last_persona" not in st.session_state:
+            st.session_state["_last_persona"] = preset_name
+        if "_system_prompt_input" not in st.session_state:
+            st.session_state["_system_prompt_input"] = preset_text or DEFAULT_SYSTEM_PROMPT
+        if preset_name != st.session_state["_last_persona"]:
+            st.session_state["_last_persona"] = preset_name
+            st.session_state["_system_prompt_input"] = preset_text
+        system_prompt = st.text_area(
+            "System prompt",
+            height=160,
+            key="_system_prompt_input",
+        )
         max_new_tokens = st.slider("Max new tokens", min_value=64, max_value=2048, value=256, step=64)
         enable_thinking = st.toggle("Enable thinking", value=False)
         stream_output = st.checkbox("Stream text response to UI", value=True)
@@ -230,6 +265,20 @@ def main() -> None:
     sandbox = get_sandbox_service(config)
     model_loaded = sandbox.is_model_loaded()
 
+    # --- Handle Load Model button ---
+    if load_clicked:
+        with st.spinner(f"Loading model {model_id}... This may download weights and take several minutes."):
+            try:
+                sandbox.load_model(model_id)
+                st.session_state["_loaded_model_id"] = model_id
+                st.session_state["_model_ready"] = True
+                _model_ready = True
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Failed to load model: {exc}")
+                st.session_state["_model_ready"] = False
+                _model_ready = False
+
     left, right = st.columns([1.2, 0.8])
 
     with left:
@@ -242,7 +291,6 @@ def main() -> None:
         active_conversation_key = _conversation_key(
             ability=ability,
             model_id=model_id,
-            preset_name=preset_name,
             system_prompt=system_prompt,
         )
         model_history, ui_history = _get_history_for_key(active_conversation_key)
@@ -264,7 +312,10 @@ def main() -> None:
         user_prompt = ""
         run_clicked = False
         if conversation_mode:
-            user_prompt = st.chat_input("Ask a follow-up question without losing context") or ""
+            user_prompt = st.chat_input(
+                "Ask a follow-up question without losing context",
+                disabled=not _model_ready,
+            ) or ""
             run_clicked = bool(user_prompt.strip())
         else:
             user_prompt = st.text_area(
@@ -282,7 +333,14 @@ def main() -> None:
             uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "mkv", "webm"])
 
         if not conversation_mode:
-            run_clicked = st.button("Run Sandbox", type="primary", use_container_width=True)
+            run_clicked = st.button(
+                "Run Sandbox",
+                type="primary",
+                use_container_width=True,
+                disabled=not _model_ready,
+            )
+            if not _model_ready:
+                st.caption("Load a model from the sidebar before running.")
 
     with right:
         st.subheader("Mode Guide")
@@ -292,11 +350,13 @@ def main() -> None:
         st.info(
             "Recommended simulator usage: Multimodal Situation Room. It turns the app into an operator console for analysis, transcription, prompt design, and storyboard planning."
         )
-        if model_loaded:
-            st.success(f"Runtime status: warm start for {model_id}.")
+        if _model_ready:
+            st.success(f"Runtime status: {model_id} loaded and ready.")
+        elif model_loaded:
+            st.warning(f"Runtime status: server is up but {model_id} is not pre-loaded. Click Load Model in the sidebar.")
         else:
             st.warning(
-                f"Runtime status: cold start for {model_id}. The first request may spend a while downloading and loading the model before generation begins."
+                f"Runtime status: cold start for {model_id}. Click Load Model in the sidebar to prepare the model before running."
             )
         st.caption(
             "The app now reports progress stages in both the server logs and the UI: runtime check, processor load, model load, input prep, generation, and decoding."
@@ -351,7 +411,6 @@ def main() -> None:
 
         result = sandbox.run(
             ability=ability,
-            preset_name=preset_name,
             user_prompt=user_prompt,
             uploaded_path=uploaded_path,
             frame_paths=frame_paths,
@@ -451,7 +510,7 @@ def main() -> None:
                     "memory": memory,
                     "support_level": result.support_level,
                     "ability": ability.value,
-                    "preset_name": preset_name,
+                    "persona": preset_name,
                     "system_prompt": system_prompt,
                     "conversation_mode": conversation_mode,
                     "conversation_turn_count": len(ui_history) // 2 if conversation_mode else 0,
