@@ -1,0 +1,66 @@
+[
+  {
+    "name": "ebay-ring-rewrite-e2b",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "iterations": 3,
+    "warmup_iterations": 1,
+    "metadata": {
+      "model_id": "google/gemma-4-E2B-it",
+      "title": "gem tourquise ring vintage sterling silver 925",
+      "description": "Vintage turquoise gemstone ring in sterling silver. Pre-owned condition. Handmade look with stamped band. Needs clearer marketplace wording without inventing details.",
+      "marketplace": "ebay",
+      "category_hint": "Jewelry > Rings",
+      "max_new_tokens": 192,
+      "enable_thinking": false
+    }
+  },
+  {
+    "name": "ebay-jacket-rewrite-e2b",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "iterations": 3,
+    "warmup_iterations": 1,
+    "metadata": {
+      "model_id": "google/gemma-4-E2B-it",
+      "title": "levis denim jacket vintage blue trucker mens large",
+      "description": "Classic Levi's style denim trucker jacket in blue wash, men's large, pre-owned with normal wear. Rewrite for a cleaner eBay listing while keeping claims factual.",
+      "marketplace": "ebay",
+      "category_hint": "Clothing, Shoes & Accessories > Men > Coats, Jackets & Vests",
+      "max_new_tokens": 192,
+      "enable_thinking": false
+    }
+  },
+  {
+    "name": "ebay-ring-rewrite-e4b",
+    "model_label": "Gemma 4 E4B",
+    "request_mode": "text-only",
+    "iterations": 3,
+    "warmup_iterations": 1,
+    "metadata": {
+      "model_id": "google/gemma-4-E4B-it",
+      "title": "gem tourquise ring vintage sterling silver 925",
+      "description": "Vintage turquoise gemstone ring in sterling silver. Pre-owned condition. Handmade look with stamped band. Needs clearer marketplace wording without inventing details.",
+      "marketplace": "ebay",
+      "category_hint": "Jewelry > Rings",
+      "max_new_tokens": 192,
+      "enable_thinking": false
+    }
+  },
+  {
+    "name": "ebay-jacket-rewrite-e4b",
+    "model_label": "Gemma 4 E4B",
+    "request_mode": "text-only",
+    "iterations": 3,
+    "warmup_iterations": 1,
+    "metadata": {
+      "model_id": "google/gemma-4-E4B-it",
+      "title": "levis denim jacket vintage blue trucker mens large",
+      "description": "Classic Levi's style denim trucker jacket in blue wash, men's large, pre-owned with normal wear. Rewrite for a cleaner eBay listing while keeping claims factual.",
+      "marketplace": "ebay",
+      "category_hint": "Clothing, Shoes & Accessories > Men > Coats, Jackets & Vests",
+      "max_new_tokens": 192,
+      "enable_thinking": false
+    }
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "rewrite-e2b",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "iterations": 5,
+    "warmup_iterations": 1,
+    "metadata": {
+      "simulated_latency_seconds": 0.05
+    }
+  },
+  {
+    "name": "rewrite-e4b",
+    "model_label": "Gemma 4 E4B",
+    "request_mode": "text-only",
+    "iterations": 5,
+    "warmup_iterations": 1,
+    "metadata": {
+      "simulated_latency_seconds": 0.08
+    }
+  }
+]

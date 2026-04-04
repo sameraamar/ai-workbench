@@ -1,0 +1,15 @@
+.venv/
+venv/
+.vscode/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.env
+model-serving/.env
+ui/.env
+.streamlit/secrets.toml
+*.pyc
+*.pyo
+*.pyd
+*.tmp
+*.log
