@@ -1,0 +1,113 @@
+[
+  {
+    "name": "prod-listing-rewrite-peak",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 75,
+    "duration_seconds": 300,
+    "ramp_up_seconds": 20,
+    "messages": [
+      {
+        "role": "system", 
+        "content": "You are a marketplace listing optimization expert. Rewrite product listings to be more engaging and conversion-focused."
+      },
+      {
+        "role": "user", 
+        "content": "Rewrite this eBay listing:\n\nTitle: Apple iPhone 15 Pro Max 256GB Unlocked\nDescription: Selling my gently used iPhone 15 Pro Max in excellent condition. 256GB storage, unlocked for all carriers. Comes with original box, charger, and screen protector already applied. No scratches or damage. Battery health at 98%. Perfect for anyone looking to upgrade!"
+      }
+    ],
+    "max_length": 400,
+    "metadata": {
+      "description": "Production peak load simulation for marketplace listing rewrite service",
+      "expected_rps": 15.0,
+      "sla_p95_seconds": 8.0
+    }
+  },
+  {
+    "name": "prod-content-generation-sustained",
+    "model_label": "Gemma 4 E4B",
+    "request_mode": "text-only",
+    "concurrent_users": 40,
+    "duration_seconds": 600,
+    "ramp_up_seconds": 30,
+    "messages": [
+      {
+        "role": "system",
+        "content": "Generate professional marketing content that is engaging and persuasive."
+      },
+      {
+        "role": "user",
+        "content": "Create a compelling product description for a premium wireless fitness tracker that monitors heart rate, sleep patterns, and activity levels. Target health-conscious consumers aged 25-45."
+      }
+    ],
+    "max_length": 512,
+    "metadata": {
+      "description": "Sustained production load for content generation service",
+      "expected_rps": 4.0,
+      "sla_p95_seconds": 12.0
+    }
+  },
+  {
+    "name": "prod-customer-support-simulation",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 120,
+    "duration_seconds": 180,
+    "ramp_up_seconds": 15,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a knowledgeable and helpful customer support agent. Provide clear, concise, and professional responses."
+      },
+      {
+        "role": "user",
+        "content": "I ordered a product 3 days ago but haven't received a tracking number yet. My order number is #12345. Can you help me check the status?"
+      }
+    ],
+    "max_length": 256,
+    "metadata": {
+      "description": "High-volume customer support chat simulation",
+      "expected_rps": 40.0,
+      "sla_p95_seconds": 3.0
+    }
+  },
+  {
+    "name": "prod-breaking-point-test",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 200,
+    "duration_seconds": 120,
+    "ramp_up_seconds": 20,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Generate a short creative story about a robot learning to paint."
+      }
+    ],
+    "max_length": 300,
+    "metadata": {
+      "description": "Find the breaking point - maximum sustainable load",
+      "warning": "This test may cause service degradation or failures"
+    }
+  },
+  {
+    "name": "prod-mixed-workload",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 60,
+    "duration_seconds": 240,
+    "ramp_up_seconds": 25,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Provide a brief analysis of renewable energy market trends, including solar and wind power adoption rates."
+      }
+    ],
+    "max_length": 400,
+    "metadata": {
+      "description": "Mixed workload simulating realistic production traffic patterns",
+      "expected_rps": 12.5,
+      "sla_p95_seconds": 6.0
+    }
+  }
+]

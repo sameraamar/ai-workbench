@@ -4,7 +4,7 @@ This file defines repository-wide working rules for humans and AI agents.
 It exists so implementation stays aligned with the persistent project documentation instead of short-lived chat context.
 AI agents should treat these instructions as always on for every task in this repository.
 
-Note: for every response you return put at beginning of the response ">> The instructions from copilot-instructions.md were loaded. <<".
+Note: for every response you return put at beginning of the response ">> The instructions from copilot-instructions.md were loaded.".
 
 # Maintenance Instructions
 

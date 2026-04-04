@@ -11,7 +11,13 @@ QUANTIZE_4BIT: bool = os.getenv("GEMMA_QUANTIZE_4BIT", "0").strip().lower() in (
 
 # GPU Configuration
 FORCE_CPU: bool = os.getenv("GEMMA_FORCE_CPU", "0").strip().lower() in ("1", "true", "yes")
-GPU_ID: int | None = int(os.getenv("GEMMA_GPU_ID", "-1")) if os.getenv("GEMMA_GPU_ID", "-1") != "-1" else None
+GPU_ID: int | None = None
+gpu_id_str = os.getenv("GEMMA_GPU_ID", "").strip()
+if gpu_id_str and gpu_id_str != "-1":
+    try:
+        GPU_ID = int(gpu_id_str)
+    except ValueError:
+        GPU_ID = None
 DEVICE_MAP: str = os.getenv("GEMMA_DEVICE_MAP", "auto")  # "auto", "cpu", or specific mapping
 
 # Performance Optimization Configuration
@@ -20,6 +26,9 @@ ENABLE_FLASH_ATTENTION: bool = os.getenv("GEMMA_FLASH_ATTENTION", "1").strip().l
 ENABLE_MEMORY_OPTIMIZATIONS: bool = os.getenv("GEMMA_MEMORY_OPT", "1").strip().lower() in ("1", "true", "yes")
 OPTIMIZE_FOR_INFERENCE: bool = os.getenv("GEMMA_INFERENCE_OPT", "1").strip().lower() in ("1", "true", "yes")
 TORCH_COMPILE_MODE: str = os.getenv("GEMMA_COMPILE_MODE", "default")  # "default", "reduce-overhead", "max-autotune"
+# Safety cap on input tokens before generation to prevent OOM on long prompts.
+# At fp16 with eager/sdpa attention on RTX 3090, ~8192 tokens is a safe ceiling.
+MAX_INPUT_TOKENS: int = int(os.getenv("GEMMA_MAX_INPUT_TOKENS", "8192"))
 
 
 @dataclass
@@ -51,3 +60,4 @@ class ServingConfig:
     enable_memory_optimizations: bool = field(default_factory=lambda: ENABLE_MEMORY_OPTIMIZATIONS)
     optimize_for_inference: bool = field(default_factory=lambda: OPTIMIZE_FOR_INFERENCE)
     torch_compile_mode: str = field(default_factory=lambda: TORCH_COMPILE_MODE)
+    max_input_tokens: int = field(default_factory=lambda: MAX_INPUT_TOKENS)

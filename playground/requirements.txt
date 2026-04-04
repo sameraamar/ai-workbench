@@ -1,0 +1,8 @@
+# Playground scripts dependencies
+# Install with: pip install -r playground/requirements.txt
+
+# Async HTTP client — required for load_test.py
+aiohttp>=3.9.0
+
+# HTTP client — used by simple_api_benchmark.py
+requests>=2.32.0

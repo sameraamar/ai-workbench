@@ -2,18 +2,24 @@
 # pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
 torch>=2.5.1
 torchvision>=0.20.1
-transformers>=5.5.0
-accelerate>=1.8.0
+transformers>=4.57.0
+accelerate>=1.10.0
 sentencepiece>=0.2.0
-numpy>=2.2.0
+numpy>=2.0.0
 
 # Performance Optimizations
-bitsandbytes>=0.46.1  # 4-bit quantization support
-# Optional: flash-attn>=2.0.0  # Uncomment for Flash Attention (requires proper CUDA setup)
+bitsandbytes>=0.48.0  # 4-bit quantization support
+# Optional (Linux/WSL2 only — no prebuilt Windows wheels): flash-attn>=2.0.0
+# Provides Flash Attention 2: ~10-30% faster than SDPA for long sequences.
+# Install on Linux: pip install flash-attn --no-build-isolation
+# On Windows native, GEMMA_FLASH_ATTENTION=1 auto-falls back to PyTorch SDPA.
 
 # Web Framework  
-fastapi>=0.116.0
-uvicorn>=0.35.0
-python-dotenv>=1.1.0
-pytest>=8.3.0
+fastapi>=0.128.0
+uvicorn>=0.39.0
+python-dotenv>=1.2.0
+
+# Load Testing
+aiohttp>=3.9.0
+pytest>=8.4.0
 httpx>=0.28.0

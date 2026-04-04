@@ -12,7 +12,7 @@ import torch
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-from transformers import AutoModelForCausalLM, AutoModelForMultimodalLM, AutoProcessor, Gemma4ForConditionalGeneration, TextIteratorStreamer
+from transformers import AutoProcessor, Gemma4ForConditionalGeneration, TextIteratorStreamer
 
 from gemma_serving.config import ServingConfig, GenerationSettings
 
@@ -138,6 +138,15 @@ class GemmaService:
         model_device = _resolve_model_device(model)
         inputs = processor(text=text, return_tensors="pt").to(model_device)
         input_len = inputs["input_ids"].shape[-1]
+        max_input = self._config.max_input_tokens
+        if input_len > max_input:
+            LOGGER.warning(
+                "Input is %d tokens — truncating to last %d tokens to prevent OOM. "
+                "Set GEMMA_MAX_INPUT_TOKENS to adjust the limit.",
+                input_len, max_input,
+            )
+            inputs = {k: v[:, -max_input:] for k, v in inputs.items()}
+            input_len = max_input
         prompt_char_count = len(text)
         memory_after_runtime = _capture_memory_snapshot(model_device)
         _reset_peak_memory_stats(model_device)
@@ -337,45 +346,11 @@ class GemmaService:
         }
 
     def _get_text_runtime(self, progress_callback: ProgressCallback | None = None):
-        if self._processor is not None and self._text_model is not None:
-            self._emit(progress_callback, "runtime", 0.62, "Text model already loaded in memory.")
-            return self._processor, self._text_model
-
-        with self._lock:
-            if self._processor is None or self._text_model is None:
-                # CUDA Warning for Model Loading
-                if not torch.cuda.is_available():
-                    LOGGER.warning("")
-                    LOGGER.warning("⚠️  🐌 CUDA NOT AVAILABLE - MODEL WILL RUN ON CPU!")
-                    LOGGER.warning("⚠️  Expect very slow inference (30-100+ seconds per request)")
-                    LOGGER.warning("⚠️  Install CUDA PyTorch for GPU acceleration")
-                    LOGGER.warning("")
-                else:
-                    LOGGER.info(f"✅ CUDA Available - Model will use GPU: {torch.cuda.get_device_name(0)}")
-                
-                dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-                self._emit(progress_callback, "runtime", 0.06, "Checking Gemma runtime state...")
-                self._ensure_processor(progress_callback)
-                quant_label = " (4-bit quantized)" if self._config.quantize_4bit else ""
-                device_label = "GPU" if torch.cuda.is_available() else "CPU"
-                self._emit(progress_callback, "model", 0.34, f"Loading Gemma text weights on {device_label}{quant_label}. The first run may download several GB and take a few minutes...")
-                self._text_model = AutoModelForCausalLM.from_pretrained(
-                    self._config.model_id,
-                    **_build_model_load_kwargs(dtype, quantize_4bit=self._config.quantize_4bit, force_download=self._config.force_download, config=self._config),
-                )
-                
-                # Apply performance optimizations
-                self._text_model = _apply_model_optimizations(self._text_model, self._config)
-                
-                # Log actual device after loading
-                actual_device = next(self._text_model.parameters()).device
-                if actual_device.type == "cuda":
-                    LOGGER.info(f"✅ Text model loaded successfully on {actual_device}")
-                else:
-                    LOGGER.warning(f"⚠️  Text model loaded on {actual_device} (CPU) - Performance will be very slow!")
-                
-                self._emit(progress_callback, "model", 0.62, "Text runtime loaded.")
-        return self._processor, self._text_model
+        # Gemma 4 uses a single Gemma4ForConditionalGeneration model for both
+        # text-only and multimodal inputs — delegate to the multimodal runtime.
+        processor, model = self._get_multimodal_runtime(progress_callback)
+        self._text_model = model  # keep is_loaded() consistent
+        return processor, model
 
     def _get_multimodal_runtime(self, progress_callback: ProgressCallback | None = None):
         if self._processor is not None and self._multimodal_model is not None:
@@ -459,26 +434,18 @@ def _resolve_model_device(model: Any) -> torch.device:
 
 
 def _load_multimodal_model(model_id: str, dtype: torch.dtype, *, quantize_4bit: bool = False, force_download: bool = False, config: ServingConfig | None = None):
-    model_loaders = (
-        Gemma4ForConditionalGeneration,
-        AutoModelForMultimodalLM,
-    )
-
-    last_error: Exception | None = None
-    for model_loader in model_loaders:
-        try:
-            LOGGER.info("Trying model loader: %s", model_loader.__name__)
-            return model_loader.from_pretrained(
-                model_id,
-                **_build_model_load_kwargs(dtype, quantize_4bit=quantize_4bit, force_download=force_download, config=config),
-            )
-        except Exception as error:  # pragma: no cover - fallback path
-            last_error = error
-            LOGGER.warning("Model loader %s failed: %s", model_loader.__name__, error)
-
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("No compatible Gemma model loader was available.")
+    LOGGER.info("Loading model with Gemma4ForConditionalGeneration: %s", model_id)
+    try:
+        return Gemma4ForConditionalGeneration.from_pretrained(
+            model_id,
+            **_build_model_load_kwargs(dtype, quantize_4bit=quantize_4bit, force_download=force_download, config=config),
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Failed to load model '{model_id}' as Gemma4ForConditionalGeneration. "
+            f"Ensure GEMMA_MODEL_ID in your .env points to a Gemma 4 checkpoint "
+            f"(e.g. google/gemma-4-E2B-it). Original error: {error}"
+        ) from error
 
 
 def _is_text_only(messages: list[dict[str, Any]]) -> bool:
@@ -732,9 +699,11 @@ def _build_model_load_kwargs(dtype: torch.dtype, *, quantize_4bit: bool = False,
             kwargs["attn_implementation"] = "flash_attention_2"
             LOGGER.info("🔧 Enabling Flash Attention 2 for model loading")
         except ImportError:
-            # Fall back to eager attention if flash attention is not available
-            kwargs["attn_implementation"] = "eager"
-            LOGGER.info("ℹ️  Flash Attention not available, using eager attention")
+            # Fall back to PyTorch SDPA (memory-efficient, no extra package needed, torch 2.0+).
+            # Do NOT fall back to "eager" — it materialises the full O(n²) attention matrix
+            # which OOMs on long inputs even on a 24 GB GPU.
+            kwargs["attn_implementation"] = "sdpa"
+            LOGGER.info("ℹ️  flash_attn not installed — using PyTorch SDPA attention (memory-efficient)")
     
     # Memory optimization settings
     if config and config.enable_memory_optimizations:

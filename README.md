@@ -60,16 +60,18 @@ These results were collected on a Windows machine with no CUDA GPU, using defaul
 
 ### Recommended GPU Tiers
 
-**⚠️ IMPORTANT**: Gemma 4 models are larger than their names suggest:
-- **Gemma 4 E2B**: Actually ~5.1B parameters (9.5GB VRAM)
-- **Gemma 4 E4B**: Actually ~8-12B parameters (16GB+ VRAM)
+**Understanding Gemma 4 model naming:** The "E" prefix means **Effective** — Gemma 4 uses a Mixture of Experts (MoE) architecture where only a fraction of parameters are active per token:
+- **Gemma 4 E2B**: 2.3B effective (active) params · 5.1B total with embeddings (VRAM ~9.5GB)
+- **Gemma 4 E4B**: 4.5B effective (active) params · 8B total with embeddings (VRAM ~16GB+)
 
-#### Gemma 4 E2B (~5.1B parameters)
+The `2B` and `4B` in the names refer to the effective/active parameter count, not the total stored size.
+
+#### Gemma 4 E2B (2.3B effective / 5.1B total)
 
 | GPU | VRAM | Expected text-rewrite latency | Measured Performance | Notes |
 |---|---|---|---|---|
 | NVIDIA RTX 3060 12 GB | 12 GB | 8–15 seconds | Not tested | Tight fit in FP16, may need quantization |
-| NVIDIA RTX 3090 24 GB | 24 GB | 5–10 seconds | **7.4 tokens/sec** ✅ | **Verified performance**, comfortable fit |
+| NVIDIA RTX 3090 24 GB | 24 GB | 5–10 seconds | **7.65 tok/s avg** ✅ | **Verified performance** (6.7–8.5 range, 3 prompt sizes), comfortable fit |
 | NVIDIA RTX 4060 Ti 16 GB | 16 GB | 6–12 seconds | Not tested | Good fit with some headroom |
 | NVIDIA T4 (cloud) | 16 GB | 10–20 seconds | Not tested | Budget cloud option |
 
@@ -116,7 +118,7 @@ NVIDIA GeForce RTX 3090   24 GB VRAM
 Intel(R) UHD Graphics 750 (integrated, not usable)
 ```
 
-- **✅ Verified Performance**: **7.4 tokens/sec** for Gemma 4 E2B (5.1B parameters)
+- **✅ Verified Performance**: **7.65 tokens/sec average** for Gemma 4 E2B (2.3B effective / 5.1B total params), range 6.7–8.5 tok/s across prompt sizes
 - **✅ Memory Usage**: 9.6GB VRAM for E2B model in FP16
 - **Ideal for local interactive use** - fits Gemma 4 E4B comfortably with room to spare
 - **No quantization needed** - runs full precision models efficiently
@@ -189,6 +191,17 @@ pip install bitsandbytes
 - Compute dtype remains `bfloat16` on CUDA, so inference math stays in half-precision while weights are stored in 4-bit.
 - `device_map="auto"` still applies — the GPU is used automatically.
 
+### Input Token Limit
+
+Attention memory scales quadratically with input length under the default `sdpa` implementation. To prevent CUDA OOM on unexpectedly long prompts, the server truncates inputs that exceed `GEMMA_MAX_INPUT_TOKENS` (default: 8192) and logs a warning. Adjust in `model-serving/.env`:
+
+```dotenv
+# Raise for long-document workflows (24 GB GPU, fp16, sdpa can handle ~16K safely)
+GEMMA_MAX_INPUT_TOKENS=16384
+```
+
+**Flash Attention 2** would remove this concern entirely (fused CUDA kernel, true $O(n)$ memory, ~10–30% faster on long sequences), but `flash-attn` has no prebuilt Windows wheels — it requires compiling C++/CUDA from source, which is only practical on Linux/WSL2. On Windows native, SDPA is the best available option and handles typical workloads well.
+
 ## Screenshots
 
 ### Main View — Text-to-Text Mode
@@ -238,32 +251,49 @@ tests/test_planning.py::test_estimate_cost_per_request_validates_inputs  PASSED
 ## Quick Start
 
 ```bash
-# Clone and create a virtual environment
+# Clone and create a virtual environment using Python 3.11
 python -m venv venv
-venv\Scripts\Activate.ps1   # Windows PowerShell
-# source venv/bin/activate  # Linux/macOS
+venv\Scripts\Activate.ps1        # Windows PowerShell
+# source venv/bin/activate        # Linux/macOS
 
-# Install dependencies for both projects
+# Install dependencies (both projects share the venv)
 pip install -r model-serving/requirements.txt
 pip install -r ui/requirements.txt
 
+# Install CUDA-enabled PyTorch (required for GPU acceleration)
+pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+
 # Copy and configure environment for each project
 cp model-serving/.env.example model-serving/.env
-# Defaults work out-of-box; edit model-serving/.env only if you need custom GPU/model settings
+# IMPORTANT: set GEMMA_FASTAPI_GATEWAY=gemma in model-serving/.env to enable real model inference
+# (the default "stub" gateway returns empty responses without loading the model)
 cp ui/.env.example ui/.env
 # Defaults work out-of-box; edit ui/.env only if backend is not at http://localhost:8000
+```
 
-# Start the model-serving API (terminal 1)
-cd model-serving
-$env:PYTHONPATH = "src"          # Windows PowerShell
-# export PYTHONPATH=src          # Linux/macOS
-uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+```powershell
+# Start the model-serving API (terminal 1) — Windows PowerShell
+$env:PYTHONPATH = "C:\path\to\ai-workbench\model-serving\src"
+venv\Scripts\python.exe -m uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000 `
+  --app-dir model-serving\src
+```
 
-# Start the UI (terminal 2)
-cd ui
-$env:PYTHONPATH = "src"          # Windows PowerShell
-# export PYTHONPATH=src          # Linux/macOS
-streamlit run app.py
+```bash
+# Start the model-serving API (terminal 1) — Linux/macOS
+export PYTHONPATH=model-serving/src
+venv/bin/python -m uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+```
+
+```powershell
+# Start the UI (terminal 2) — Windows PowerShell
+$env:PYTHONPATH = "C:\path\to\ai-workbench\ui\src"
+cd ui && .\..\venv\Scripts\streamlit.exe run app.py
+```
+
+```bash
+# Start the UI (terminal 2) — Linux/macOS
+export PYTHONPATH=ui/src
+cd ui && ../venv/bin/streamlit run app.py
 ```
 
 ## Serving Research Toolkit
@@ -279,14 +309,23 @@ $env:PYTHONPATH = "model-serving\src"   # Windows PowerShell
 python playground/benchmark_runner.py model-serving/docs/scenarios/ebay-listing-benchmarks.json \
   --target gemma_serving.benchmark_targets:benchmark_listing_rewrite
 
+# Run concurrent load testing (10-500+ concurrent users)
+python playground/load_test.py playground/load_scenarios.json --concurrent-users 50 --duration 120
+
+# Run production stress tests
+python playground/load_test.py playground/production_load_scenarios.json --ramp-up 30
+
 # Run E2B vs E4B concurrency simulation
 python playground/concurrency_simulation.py --registered-users 100 --active-request-rate 0.1 --multimodal-share 0.2
 ```
+
+**See [docs/benchmarks.md](docs/benchmarks.md) for comprehensive performance results, capacity planning guidance, and detailed usage examples.**
 
 ## Documentation
 
 - [docs/START_HERE.md](docs/START_HERE.md) — Project entrypoint and restart guide
 - [docs/tasks.md](docs/tasks.md) — Task tracking and phase status
+- [docs/benchmarks.md](docs/benchmarks.md) — Performance testing results and capacity planning guidance
 - [docs/gpu-selection-guide.md](docs/gpu-selection-guide.md) — GPU control and multi-system deployment
 - [docs/design/design.md](docs/design/design.md) — Architecture and design decisions
 - [docs/research/gemma4-serving-evaluation.md](docs/research/gemma4-serving-evaluation.md) — Model selection and serving research

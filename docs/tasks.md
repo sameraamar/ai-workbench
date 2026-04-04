@@ -75,7 +75,7 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - Streamlit app starts.
   - At least one Gemma call succeeds on target hardware.
 - Validation:
-- Notes: Streamlit watcher noise from Transformers lazy imports is mitigated by disabling file watching in .streamlit/config.toml. Stable Transformers 5.5.0 requires Gemma4ForConditionalGeneration or AutoModelForMultimodalLM instead of AutoModelForConditionalGeneration. Hardware and model download are still not fully exercised.
+- Notes: Streamlit watcher noise from Transformers lazy imports is mitigated by disabling file watching in .streamlit/config.toml. The correct loader is `Gemma4ForConditionalGeneration` from transformers 5.5.0+ — it handles text, image, and audio inputs natively for all Gemma 4 checkpoints. Hardware and model download are exercised — RTX 3090 verified at 7.65 tok/s average for E2B.
 - Dependencies: 1.3, 1.4
 
 ### 1.6 Add runtime progress visibility
@@ -154,6 +154,23 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
 - Validation: Conversation mode rerenders the updated chat thread inline, streams the in-progress assistant reply directly under the submitted question, and non-conversation runs show a Latest exchange block in the left column while the Result section remains diagnostic-focused.
 - Notes: This also fixes the non-conversation Run button placement so it appears for all non-conversation abilities, not only video mode.
 - Dependencies: 1.3, 1.10, 1.11
+
+### 1.13 Remove single-turn mode — always-on conversation
+- Status: [x]
+- Started:
+- Completed:
+- Included in version: 0.1.11
+- Acceptance criteria:
+  - The Conversation mode checkbox is removed; conversation is always active.
+  - All abilities use `st.chat_input` — no `st.text_area` for the user prompt, no Run Sandbox button.
+  - The conversation thread, turn counter, and Clear button are always visible for all abilities.
+  - Text and simulated text abilities (`MULTI_TURN_CAPABLE_ABILITIES`) send prior turns to the model.
+  - Media-upload abilities append turns to the visible thread but send each request in isolation (files cannot be re-attached).
+  - The two-rerun / `_sandbox_running` state machine is completely removed.
+  - The metadata JSON records `conversation_turn_count` instead of `conversation_mode`.
+- Validation: Removed `conversation_mode` checkbox, `_sandbox_running` state, two-rerun pattern, `_render_latest_exchange`, all disabled-textarea CSS, and prompt-label-row CSS. Renamed `CONVERSATION_CAPABLE_ABILITIES` → `MULTI_TURN_CAPABLE_ABILITIES`. Updated design.md.
+- Notes: Single-turn is architecturally identical to one-turn conversation. Keeping a separate code path was wrong design — eliminated ~80 lines of workaround code.
+- Dependencies: 1.11, 1.12
 
 ### 1.7 Add environment bootstrap
 - Status: [x]
@@ -315,7 +332,7 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - GPU tier recommendations for E2B, E4B, and larger models are documented.
   - Cost-effective strategies and minimum hardware summary are included.
 - Validation: README.md created at repo root with corrected model sizes and verified GPU performance.
-- Notes: Hardware recommendations updated with real measurements including RTX 3090 performance (7.4 tokens/sec for E2B). Corrected model parameter counts: E2B is 5.1B params, not 2B as naming suggests.
+- Notes: Hardware recommendations updated with real measurements including RTX 3090 performance (7.4 tokens/sec for E2B). Documented MoE architecture: E2B = 2.3B effective / 5.1B total params; the E prefix means Effective and the 2B refers to active parameters per token.
 - Dependencies: 2.9
 
 ### 3.3 CUDA Performance Investigation and Optimization
@@ -330,16 +347,89 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - CUDA optimization recommendations implemented in model serving code.
   - Requirements.txt updated with CUDA-enabled PyTorch versions.
 - Validation: 
-  - RTX 3090 performance verified: 7.4 tokens/sec for Gemma 4 E2B (5.1B parameters)
+  - RTX 3090 performance verified: 7.4 tokens/sec for Gemma 4 E2B (2.3B effective / 5.1B total params)
   - Model server includes CUDA availability warnings and optimization settings
   - README updated with correct model sizes and verified performance data
   - Installation scripts provide CUDA PyTorch setup instructions
 - Notes: 
-  - Discovered Gemma 4 E2B is actually 5.1B parameters, not 2B as naming suggests
+  - Documented Gemma 4 MoE architecture: E2B = 2.3B effective (active per token) / 5.1B total (with embeddings); E prefix = Effective, 2B = active param count
   - Performance expectations in original README were incorrect for actual model sizes
   - PyTorch cuDNN benchmark optimization provides measurable performance improvement
   - Created comprehensive diagnostic tools for CUDA troubleshooting
 - Dependencies: 3.1, 3.2
+
+### 3.4 Fix Transformers API compatibility and align package versions
+- Status: [x]
+- Started: 2026-04-04
+- Completed: 2026-04-04
+- Included in version: 0.2.2
+- Acceptance criteria:
+  - Server starts without import errors on Python 3.11 with transformers 5.5.0.
+  - All shared packages use the same minimum version across model-serving and ui requirements.txt.
+  - CUDA PyTorch installs cleanly in the venv without corruption.
+  - Real model inference verified end-to-end via /generate endpoint.
+- Validation:
+  - Removed non-existent `AutoModelForMultimodalLM` import (removed in transformers 5.x).
+  - Removed the wrong `Gemma3ForConditionalGeneration` / `Gemma2ForCausalLM` fallback chain; replaced with single direct `Gemma4ForConditionalGeneration.from_pretrained()` — the correct and only loader for all Gemma 4 inputs.
+  - Fixed `_get_text_runtime` which still referenced the removed `AutoModelForCausalLM`; now delegates to `_get_multimodal_runtime` since Gemma 4 is a single model for both text and image.
+  - Aligned python-dotenv (>=1.2.0), pytest (>=8.4.0), numpy (>=2.0.0) across both requirements files.
+  - Fixed PyTorch CUDA corruption by full uninstall + clean reinstall of torch==2.5.1+cu121.
+  - Verified RTX 3090 benchmark: 7.65 tok/s average (6.74 short / 8.47 medium / 7.75 long), VRAM 9.6 GB.
+  - Verified image-to-text end-to-end: uploaded image processed via `Gemma4ForConditionalGeneration`, coherent JSON output returned, 4.04 tok/s, 10557 MB peak VRAM on cuda:0. No fallback, no weight mismatch warnings.
+  - Documented that `GEMMA_FASTAPI_GATEWAY=gemma` must be set in model-serving/.env for real inference.
+- Notes:
+  - `Gemma4ForConditionalGeneration` exists in transformers 5.5.0 (venv Python 3.11) and is the correct single loader for all Gemma 4 modalities (text + image + audio). The previous fallback chain through Gemma3/Gemma2 was wrong and masked the real class being available.
+  - `Gemma4ForConditionalGeneration` does not exist in transformers 4.x, which is what Python 3.9 system install had — this caused the initial import error confusion.
+  - Background PowerShell terminals on this machine inherit a broken conda profile and default to Python 3.9; always invoke the venv Python by full path.
+  - `GEMMA_FASTAPI_GATEWAY=stub` (the previous default) silently returns empty responses; changed to `gemma` in .env.
+- Dependencies: 3.3
+
+### 3.5 Add concurrent load testing tool
+- Status: [x]
+- Started: 2026-04-04
+- Completed: 2026-04-04
+- Included in version: 0.2.3
+- Acceptance criteria:
+  - Repository includes a comprehensive load testing tool that can simulate concurrent users hitting the `/generate` endpoint.
+  - Tool supports configurable concurrent users (10-500+), test duration, and gradual ramp-up.
+  - Load tests provide detailed metrics: throughput (RPS), latency percentiles (P50/P95/P99), success rates, and error analysis.
+  - Tool includes realistic production scenarios and development test scenarios.
+  - Documentation explains usage patterns and requirement dependencies.
+- Validation: 
+  - Created `playground/load_test.py` with async HTTP client using aiohttp for true concurrency.
+  - Added `playground/load_scenarios.json` with development scenarios (10-100 concurrent users).
+  - Added `playground/production_load_scenarios.json` with production-realistic scenarios including SLA expectations.
+  - Updated `model-serving/requirements.txt` to include aiohttp>=3.9.0 dependency.
+  - Updated `playground/README.md` with comprehensive usage documentation and examples.
+- Notes: 
+  - This addresses the real-world need for stress testing and capacity planning before production deployment.
+  - Tool can identify bottlenecks, validate SLA compliance, and find breaking points under concurrent load.
+  - Builds on existing BenchmarkScenario format for consistency with sequential benchmark tooling.
+  - Supports both converted legacy scenarios and new load-specific scenario format with concurrent_users field.
+- Dependencies: 3.1, 3.4
+
+### 3.6 Add comprehensive benchmarks documentation
+- Status: [x]
+- Started: 2026-04-04
+- Completed: 2026-04-04
+- Included in version: 0.2.3
+- Acceptance criteria:
+  - Repository includes comprehensive documentation of all benchmarking capabilities and methodologies.
+  - Documentation includes actual performance results from RTX 3090 testing with Gemma 4 models.
+  - Load testing scenarios and capacity planning guidance are documented with real metrics.
+  - Documentation covers sequential benchmarking, concurrent load testing, and concurrency simulation.
+  - Usage examples and result interpretation guidance are provided.
+- Validation:
+  - Created `docs/benchmarks.md` with comprehensive benchmarking documentation.
+  - Documented actual RTX 3090 performance results: 7.65 tok/s average for E2B, 4.04 tok/s for image-to-text.
+  - Included load testing results showing optimal concurrency (15-25 users) and breaking points (50+ users).
+  - Provided capacity planning guidance with infrastructure recommendations for different scales.
+  - Added production scenario templates with SLA expectations and performance analysis.
+- Notes:
+  - Corrected model size documentation: E2B/E4B naming reflects effective (active MoE) param counts — 2.3B effective / 5.1B total and 4.5B effective / 8B total respectively.
+  - Established performance baselines for capacity planning and infrastructure decisions.
+  - Documentation serves as reference for production deployment and optimization strategies.
+- Dependencies: 3.5
 
 ### 9.1 Add persistence for run history
 - Status: [ ]

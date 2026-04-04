@@ -71,7 +71,7 @@ Some persona details are still To Be Discovered.
 - The UI must let users choose the requested ability modes.
 - The UI must let users switch among curated Gemma 4 model profiles and optionally enter a custom model ID.
 - The UI must let users edit the system prompt and choose whether text responses stream or arrive in one shot.
-- The UI must support multi-turn conversation mode for text-capable abilities.
+- The UI always operates in conversation mode. Every ability shows a persistent thread with turn count and a Clear button.
 - The app must route all Gemma calls through a reusable service module.
 - The app must apply the standardized sampling defaults:
   - temperature = 1.0
@@ -148,7 +148,8 @@ ai-sandbox/
    - Lets the user choose among curated Gemma 4 checkpoints or enter a custom model ID
    - Lets the user edit the system prompt used for the run
    - Lets the user switch text generation between streaming and one-shot delivery
-   - Preserves prior turns in Streamlit session state when conversation mode is enabled
+   - Always operates in conversation mode — uses `st.chat_input` for all abilities, shows a persistent multi-turn thread
+   - Preserves prior turns in Streamlit session state; passes them to the model only for `MULTI_TURN_CAPABLE_ABILITIES` (text and simulated text modes)
    - Renders assistant replies inline with the prompt or chat thread
    - Shows runtime status, progress, and run metadata
 
@@ -186,7 +187,7 @@ Each completed run should surface enough metadata to make local comparisons mean
 - Simulator presets are prompt-framing helpers that are prepended to the task prompt.
 - The system prompt is a separate user-editable control that populates the system role sent to Gemma.
 - Text generation can run in streaming mode for live feedback or one-shot mode for a single final response.
-- Conversation mode currently applies to text and simulated text abilities. Media-upload abilities still run as isolated requests until the app can safely persist and reattach uploaded inputs across turns.
+- Conversation mode is always active. Every ability shows a persistent thread with turn count and a Clear button. Text and simulated text abilities (`MULTI_TURN_CAPABLE_ABILITIES`) include prior turns in the model request. Media-upload abilities (image, audio, video) append turns to the visible thread but send each request in isolation because uploaded files cannot be re-attached across turns.
 
 ### Starter Technology Choices
 
@@ -240,6 +241,20 @@ Each project has its own test folder and `PYTHONPATH` root:
 - `ui/tests/` (4 tests) — run with `PYTHONPATH=ui/src`
 
 Tests focus on deterministic prompt-building, orchestration logic, and API contract validation using fakes and mocks rather than real model weights.
+
+### Performance and Load Testing
+
+Additional testing capabilities in `playground/`:
+
+- **Sequential benchmarking** (`benchmark_runner.py`) — Single-threaded performance measurement with timing metrics
+- **Concurrency simulation** (`concurrency_simulation.py`) — Mathematical capacity modeling for different user loads
+- **Concurrent load testing** (`load_test.py`) — Multi-user stress testing with async HTTP clients
+
+The load testing tool supports:
+- 10-500+ concurrent users with configurable ramp-up
+- Realistic production scenarios with SLA expectations
+- Comprehensive metrics: throughput (RPS), latency percentiles (P50/P95/P99), error rates
+- Bottleneck identification and capacity planning for production deployment
 
 ## Deployment And Operations
 

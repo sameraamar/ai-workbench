@@ -1,5 +1,22 @@
 from __future__ import annotations
 
+# Load environment variables from .env file
+import os
+from pathlib import Path
+
+# Try to load .env file from model-serving directory (2 levels up from this file)
+try:
+    from dotenv import load_dotenv
+    env_file = Path(__file__).parent.parent.parent / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+        print(f"✅ Loaded .env from {env_file}")
+    else:
+        # Try current working directory
+        load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, continue with os.environ
+
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum

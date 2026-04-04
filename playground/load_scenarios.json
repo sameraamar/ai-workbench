@@ -1,0 +1,93 @@
+[
+  {
+    "name": "light-load-e2b",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 10,
+    "duration_seconds": 60,
+    "ramp_up_seconds": 5,
+    "messages": [
+      {"role": "user", "content": "Explain the benefits of renewable energy in 2-3 sentences."}
+    ],
+    "max_length": 64,
+    "metadata": {
+      "description": "Light load test with 10 concurrent users"
+    }
+  },
+  {
+    "name": "medium-load-e2b",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 25,
+    "duration_seconds": 120,
+    "ramp_up_seconds": 10,
+    "messages": [
+      {"role": "user", "content": "Write a product description for a wireless Bluetooth headphone with noise cancellation features."}
+    ],
+    "max_length": 96,
+    "metadata": {
+      "description": "Medium load test with 25 concurrent users"
+    }
+  },
+  {
+    "name": "heavy-load-e2b",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 50,
+    "duration_seconds": 180,
+    "ramp_up_seconds": 15,
+    "messages": [
+      {"role": "user", "content": "Analyze the current trends in artificial intelligence and machine learning, focusing on their potential impact on business operations and consumer experience."}
+    ],
+    "max_length": 128,
+    "metadata": {
+      "description": "Heavy load test with 50 concurrent users and longer prompts"
+    }
+  },
+  {
+    "name": "stress-test-e2b",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 100,
+    "duration_seconds": 300,
+    "ramp_up_seconds": 30,
+    "messages": [
+      {"role": "user", "content": "Create a comprehensive business plan for a sustainable technology startup, including market analysis, financial projections, and growth strategy."}
+    ],
+    "max_length": 1024,
+    "metadata": {
+      "description": "Stress test with 100 concurrent users to find breaking point"
+    }
+  },
+  {
+    "name": "quick-burst-e4b",
+    "model_label": "Gemma 4 E4B",
+    "request_mode": "text-only",
+    "concurrent_users": 20,
+    "duration_seconds": 30,
+    "ramp_up_seconds": 0,
+    "messages": [
+      {"role": "user", "content": "Summarize the key principles of effective project management."}
+    ],
+    "max_length": 200,
+    "metadata": {
+      "description": "Quick burst test with E4B model - no ramp up"
+    }
+  },
+  {
+    "name": "conversation-simulation",
+    "model_label": "Gemma 4 E2B",
+    "request_mode": "text-only",
+    "concurrent_users": 15,
+    "duration_seconds": 90,
+    "ramp_up_seconds": 5,
+    "messages": [
+      {"role": "system", "content": "You are a helpful customer service assistant."},
+      {"role": "user", "content": "I have a problem with my recent order. Can you help me track its status?"}
+    ],
+    "max_length": 300,
+    "metadata": {
+      "description": "Simulates customer service chat with system prompt"
+    }
+  }
+]

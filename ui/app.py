@@ -42,6 +42,7 @@ def inject_styles() -> None:
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap');
         .stApp {
             background:
                 radial-gradient(circle at top left, rgba(255, 208, 110, 0.22), transparent 28%),
@@ -74,6 +75,35 @@ def inject_styles() -> None:
             font-size: 0.82rem;
             margin-bottom: 0.5rem;
         }
+        /* Chat input — visible border, focus ring, and matching design system */
+        [data-testid="stChatInput"] {
+            border: 1.5px solid rgba(60, 80, 110, 0.30) !important;
+            border-radius: 16px !important;
+            background: rgba(255, 255, 255, 0.90) !important;
+            box-shadow: 0 2px 10px rgba(60, 80, 110, 0.07) !important;
+            transition: border-color 0.18s, box-shadow 0.18s;
+        }
+        [data-testid="stChatInput"]:focus-within {
+            border-color: rgba(55, 115, 200, 0.55) !important;
+            box-shadow: 0 0 0 3px rgba(55, 115, 200, 0.12), 0 2px 10px rgba(60, 80, 110, 0.07) !important;
+        }
+        /* Prompt label row with Material icon */
+        .prompt-label-row {
+            display: flex;
+            align-items: center;
+            gap: 0.32rem;
+            margin-bottom: 0.4rem;
+            font-size: 0.88rem;
+            font-weight: 500;
+            color: #3d4f62;
+        }
+        .prompt-label-row .mat-icon {
+            font-family: 'Material Symbols Rounded';
+            font-size: 1.15rem;
+            vertical-align: middle;
+            line-height: 1;
+            color: #6b84a0;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -97,7 +127,10 @@ def _format_optional_float(value: object, suffix: str = "") -> str:
     return "unavailable"
 
 
-CONVERSATION_CAPABLE_ABILITIES = {
+# Abilities that support multi-turn context — prior turns are included in the model request.
+# Media-upload abilities (image, audio, video) run as isolated requests: uploaded files cannot
+# be re-attached across turns, so the thread is visible in the UI but not re-sent to the model.
+MULTI_TURN_CAPABLE_ABILITIES = {
     Ability.TEXT_TO_TEXT,
     Ability.TEXT_TO_IMAGE,
     Ability.TEXT_TO_VIDEO,
@@ -143,34 +176,12 @@ def _render_conversation_history(history: list[dict[str, str]]) -> None:
             st.markdown(message.get("content", ""))
 
 
-def _render_pending_exchange(
-    *,
-    conversation_mode: bool,
-    user_prompt: str,
-) -> tuple[st.delta_generator.DeltaGenerator, st.delta_generator.DeltaGenerator | None]:
-    if conversation_mode:
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            return placeholder, None
-
-    wrapper = st.container()
-    with wrapper:
-        st.markdown("**Latest exchange**")
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-    return placeholder, wrapper
-
-
-def _render_latest_exchange(user_prompt: str, response_text: str) -> None:
-    st.markdown("**Latest exchange**")
+def _render_pending_exchange(user_prompt: str) -> st.delta_generator.DeltaGenerator:
     with st.chat_message("user"):
         st.markdown(user_prompt)
     with st.chat_message("assistant"):
-        st.markdown(response_text)
+        placeholder = st.empty()
+    return placeholder
 
 
 def main() -> None:
@@ -229,13 +240,6 @@ def main() -> None:
                 format_func=lambda value: value.replace("-", " ").title(),
             )
         )
-        conversation_supported = ability in CONVERSATION_CAPABLE_ABILITIES
-        conversation_mode = st.checkbox(
-            "Conversation mode",
-            value=False,
-            disabled=not conversation_supported,
-            help="Keep prior text turns in context for follow-up questions. Currently available for text and simulated text modes.",
-        )
         preset_name = st.selectbox("Assistant persona", options=list(PERSONA_PRESETS))
         preset_text = PERSONA_PRESETS[preset_name]
         if "_last_persona" not in st.session_state:
@@ -283,8 +287,8 @@ def main() -> None:
 
     with left:
         spec = sandbox.get_ability_spec(ability)
-        if not conversation_supported:
-            st.caption("Conversation mode is currently limited to text and simulated text abilities. Upload-based modes still run as isolated requests.")
+        if ability not in MULTI_TURN_CAPABLE_ABILITIES:
+            st.caption("Upload-based modes run as isolated requests — prior turns are shown in the thread but not re-sent to the model.")
         st.markdown(f'<div class="support-chip">{spec.support_level}</div>', unsafe_allow_html=True)
         st.write(spec.summary)
 
@@ -295,34 +299,19 @@ def main() -> None:
         )
         model_history, ui_history = _get_history_for_key(active_conversation_key)
         conversation_history_slot = st.empty()
+
+        left_controls = st.columns([0.7, 0.3])
+        with left_controls[0]:
+            turn_counter_slot = st.empty()
+            turn_counter_slot.caption(f"Conversation turns: {len(ui_history) // 2}")
+        with left_controls[1]:
+            if st.button("Clear conversation", use_container_width=True):
+                _clear_history_for_key(active_conversation_key)
+                model_history, ui_history = _get_history_for_key(active_conversation_key)
+        with conversation_history_slot.container():
+            _render_conversation_history(ui_history)
+
         pending_exchange_slot = st.empty()
-        if conversation_mode:
-            left_controls = st.columns([0.7, 0.3])
-            with left_controls[0]:
-                st.caption(f"Conversation turns: {len(ui_history) // 2}")
-            with left_controls[1]:
-                if st.button("Clear conversation", use_container_width=True):
-                    _clear_history_for_key(active_conversation_key)
-                    model_history, ui_history = _get_history_for_key(active_conversation_key)
-            with conversation_history_slot.container():
-                _render_conversation_history(ui_history)
-
-        latest_exchange_slot = st.empty()
-
-        user_prompt = ""
-        run_clicked = False
-        if conversation_mode:
-            user_prompt = st.chat_input(
-                "Ask a follow-up question without losing context",
-                disabled=not _model_ready,
-            ) or ""
-            run_clicked = bool(user_prompt.strip())
-        else:
-            user_prompt = st.text_area(
-                "Prompt",
-                height=180,
-                placeholder="Describe the task you want the sandbox to run.",
-            )
 
         uploaded_file = None
         if ability is Ability.IMAGE_TO_TEXT:
@@ -332,15 +321,21 @@ def main() -> None:
         elif ability is Ability.VIDEO_TO_TEXT:
             uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "mkv", "webm"])
 
-        if not conversation_mode:
-            run_clicked = st.button(
-                "Run Sandbox",
-                type="primary",
-                use_container_width=True,
-                disabled=not _model_ready,
-            )
-            if not _model_ready:
-                st.caption("Load a model from the sidebar before running.")
+        st.markdown(
+            '<div class="prompt-label-row">'
+            '<span class="mat-icon">face</span>'
+            '<span>Prompt</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        user_prompt = st.chat_input(
+            "Type your message and press Enter to run.",
+            disabled=not _model_ready,
+        ) or ""
+        run_clicked = bool(user_prompt.strip())
+
+        if not _model_ready:
+            st.caption("Load a model from the sidebar before running.")
 
     with right:
         st.subheader("Mode Guide")
@@ -369,20 +364,9 @@ def main() -> None:
     frame_paths: list[Path] | None = None
     run_status = st.status("Queued sandbox run.", expanded=True)
     run_progress = st.progress(0, text="Waiting to start...")
-    if conversation_mode:
-        pending_exchange_slot.empty()
-        with pending_exchange_slot.container():
-            live_response_placeholder, _unused_wrapper = _render_pending_exchange(
-                conversation_mode=True,
-                user_prompt=user_prompt,
-            )
-    else:
-        latest_exchange_slot.empty()
-        with latest_exchange_slot.container():
-            live_response_placeholder, _unused_wrapper = _render_pending_exchange(
-                conversation_mode=False,
-                user_prompt=user_prompt,
-            )
+    pending_exchange_slot.empty()
+    with pending_exchange_slot.container():
+        live_response_placeholder = _render_pending_exchange(user_prompt=user_prompt)
     if stream_output:
         live_response_placeholder.caption("No tokens received yet.")
     else:
@@ -414,7 +398,7 @@ def main() -> None:
             user_prompt=user_prompt,
             uploaded_path=uploaded_path,
             frame_paths=frame_paths,
-            prior_messages=model_history if conversation_mode else None,
+            prior_messages=model_history if ability in MULTI_TURN_CAPABLE_ABILITIES else None,
             progress_callback=emit_progress,
             token_callback=emit_partial_text if stream_output else None,
         )
@@ -422,19 +406,16 @@ def main() -> None:
         run_status.update(label="Sandbox run complete.", state="complete", expanded=False)
         live_response_placeholder.empty()
 
-        if conversation_mode:
+        if ability in MULTI_TURN_CAPABLE_ABILITIES:
             model_history.append({"role": "user", "content": [{"type": "text", "text": result.prompt_used}]})
             model_history.append({"role": "assistant", "content": [{"type": "text", "text": result.response_text}]})
-            ui_history.append({"role": "user", "content": user_prompt})
-            ui_history.append({"role": "assistant", "content": result.response_text})
-            pending_exchange_slot.empty()
-            conversation_history_slot.empty()
-            with conversation_history_slot.container():
-                _render_conversation_history(ui_history)
-        else:
-            latest_exchange_slot.empty()
-            with latest_exchange_slot.container():
-                _render_latest_exchange(user_prompt, result.response_text)
+        ui_history.append({"role": "user", "content": user_prompt})
+        ui_history.append({"role": "assistant", "content": result.response_text})
+        turn_counter_slot.caption(f"Conversation turns: {len(ui_history) // 2}")
+        pending_exchange_slot.empty()
+        conversation_history_slot.empty()
+        with conversation_history_slot.container():
+            _render_conversation_history(ui_history)
 
         st.subheader("Result")
         st.caption(f"Support level: {result.support_level}")
@@ -512,8 +493,7 @@ def main() -> None:
                     "ability": ability.value,
                     "persona": preset_name,
                     "system_prompt": system_prompt,
-                    "conversation_mode": conversation_mode,
-                    "conversation_turn_count": len(ui_history) // 2 if conversation_mode else 0,
+                    "conversation_turn_count": len(ui_history) // 2,
                     "enable_thinking": enable_thinking,
                     "stream_output": stream_output,
                     "max_new_tokens": max_new_tokens,

@@ -43,7 +43,8 @@ The current truth for project intent and implementation priority is:
 
 1. [docs/tasks.md](./tasks.md)
 2. [docs/design/design.md](./design/design.md)
-3. Relevant design subdocuments if they are added later
+3. [docs/benchmarks.md](./benchmarks.md) - Performance testing results and capacity planning guidance
+4. Relevant design subdocuments if they are added later
 
 ## Restarting AI Sessions
 
