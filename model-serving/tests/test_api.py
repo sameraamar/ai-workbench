@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from gemma_serving.app import JobState, create_low_cost_app
+from model_serving.app import JobState, create_low_cost_app
 
 
 def test_health_endpoint_reports_ok() -> None:

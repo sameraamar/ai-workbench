@@ -1,6 +1,6 @@
-from gemma_serving.benchmark_targets import benchmark_listing_rewrite
-from gemma_serving.benchmarking import BenchmarkScenario
-from gemma_serving.domain import RequestMode
+from model_serving.planning.benchmark_targets import benchmark_listing_rewrite
+from model_serving.planning.benchmarking import BenchmarkScenario
+from model_serving.domain import RequestMode
 
 
 class FakeGateway:
@@ -25,7 +25,7 @@ def test_benchmark_listing_rewrite_uses_scenario_metadata(monkeypatch) -> None:
         return fake_gateway
 
     monkeypatch.setattr(
-        "gemma_serving.benchmark_targets._get_gateway",
+        "model_serving.planning.benchmark_targets._get_gateway",
         fake_get_gateway,
     )
 
@@ -59,7 +59,7 @@ def test_benchmark_listing_rewrite_derives_model_id_from_label(monkeypatch) -> N
         return fake_gateway
 
     monkeypatch.setattr(
-        "gemma_serving.benchmark_targets._get_gateway",
+        "model_serving.planning.benchmark_targets._get_gateway",
         fake_get_gateway,
     )
 

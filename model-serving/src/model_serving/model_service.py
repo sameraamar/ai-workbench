@@ -12,9 +12,31 @@ import torch
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-from transformers import AutoModelForMultimodalLM, AutoProcessor, TextIteratorStreamer
+# Lazy-import transformers symbols so the app starts fast (heavy imports
+# happen at first model load, not at module import time).
+_transformers_imported = False
+AutoModelForMultimodalLM: Any = None  # type: ignore[assignment]
+AutoProcessor: Any = None  # type: ignore[assignment]
+TextIteratorStreamer: Any = None  # type: ignore[assignment]
 
-from gemma_serving.config import ServingConfig, GenerationSettings
+
+def _import_transformers() -> None:
+    """Import heavy transformers symbols on first real use."""
+    global _transformers_imported, AutoModelForMultimodalLM, AutoProcessor, TextIteratorStreamer
+    if _transformers_imported:
+        return
+    from transformers import (
+        AutoModelForMultimodalLM as _AMML,
+        AutoProcessor as _AP,
+        TextIteratorStreamer as _TIS,
+    )
+    AutoModelForMultimodalLM = _AMML
+    AutoProcessor = _AP
+    TextIteratorStreamer = _TIS
+    _transformers_imported = True
+
+
+from model_serving.config import ServingConfig, GenerationSettings
 
 
 def _apply_model_optimizations(model: Any, config: ServingConfig) -> Any:
@@ -87,7 +109,9 @@ class GenerationResult(dict):
     total_token_count: int | None
 
 
-class GemmaService:
+class ModelService:
+    """Model-agnostic inference service (supports Gemma, Mistral, etc.)."""
+
     def __init__(self, config: ServingConfig) -> None:
         self._config = config
         self._processor = None
@@ -213,7 +237,7 @@ class GemmaService:
         progress_callback: ProgressCallback | None,
         token_callback: TokenCallback | None,
     ) -> str:
-        streamer = TextIteratorStreamer(processor, skip_prompt=True, skip_special_tokens=False)
+        streamer = TextIteratorStreamer(processor, skip_prompt=True, skip_special_tokens=True)
         generation_error: list[Exception] = []
 
         def run_generation() -> None:
@@ -270,7 +294,7 @@ class GemmaService:
                 top_k=settings.top_k,
                 max_new_tokens=settings.max_new_tokens,
             )
-        return processor.decode(outputs[0][input_len:], skip_special_tokens=False)
+        return processor.decode(outputs[0][input_len:], skip_special_tokens=True)
 
     def _generate_multimodal(
         self,
@@ -315,7 +339,7 @@ class GemmaService:
 
         decode_started_at = perf_counter()
         self._emit(progress_callback, "decode", 0.96, "Decoding response...")
-        response = processor.decode(outputs[0][input_len:], skip_special_tokens=False)
+        response = processor.decode(outputs[0][input_len:], skip_special_tokens=True)
         parsed = _parse_response(processor, response)
         input_token_count = input_len
         output_token_count = int(outputs[0].shape[-1] - input_len)
@@ -396,6 +420,7 @@ class GemmaService:
         return self._processor, self._multimodal_model
 
     def _ensure_processor(self, progress_callback: ProgressCallback | None = None) -> None:
+        _import_transformers()  # lazy-load AutoProcessor etc.
         if self._processor is None:
             self._emit(
                 progress_callback,
@@ -403,50 +428,80 @@ class GemmaService:
                 0.16,
                 f"Loading processor for {self._config.model_id}...",
             )
-            if "mistral" in self._config.model_id.lower():
-                # fix_mistral_regex is a tokenizer-level flag and is not forwarded
-                # by AutoProcessor to its internal tokenizer. Load the tokenizer
-                # explicitly with the flag, then replace the one inside the processor.
-                # See: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84
-                #
-                # fix_mistral_regex=True only applies to LlamaTokenizerFast-backed tokenizers
-                # (older Mistral models using SentencePiece). Newer Mistral models (e.g.
-                # Mistral-Small-3.1 / Mistral-Small-4) use the Tekken tokenizer, which is a
-                # native Rust TokenizersBackend and does not need — or support — this flag.
-                # Passing fix_mistral_regex=True to a TokenizersBackend tokenizer raises:
-                #   AttributeError: 'tokenizers.Tokenizer' has no attribute 'backend_tokenizer'
-                # because the fix modifies internal Python-level attributes that only exist
-                # in the SentencePiece-derived fast tokenizer.
-                #
-                # Strategy: check the tokenizer class declared in the config first; only set
-                # fix_mistral_regex=True for LlamaTokenizerFast-based models.
-                from transformers import AutoTokenizer
-                from transformers import AutoConfig as _AutoCfg
-                _tok_cfg = _AutoCfg.for_model("mistral3")  # not used — we need the repo config
-                _repo_cfg = _AutoCfg.from_pretrained(self._config.model_id)
-                _tok_class = getattr(_repo_cfg, "tokenizer_class", None)
-                # LlamaTokenizerFast uses SentencePiece and needs the regex fix.
-                # MistralTokenizerFast / TokenizersBackend (Tekken) does not.
-                _needs_regex_fix = _tok_class == "LlamaTokenizerFast"
-                if _needs_regex_fix:
-                    LOGGER.info(
-                        "Mistral model with LlamaTokenizerFast detected — "
-                        "loading tokenizer with fix_mistral_regex=True"
-                    )
-                    _tokenizer = AutoTokenizer.from_pretrained(
-                        self._config.model_id, fix_mistral_regex=True
-                    )
-                else:
-                    LOGGER.info(
-                        "Mistral model with %s detected — "
-                        "fix_mistral_regex not applicable, loading tokenizer normally",
-                        _tok_class or "unknown tokenizer class",
-                    )
-                    _tokenizer = AutoTokenizer.from_pretrained(self._config.model_id)
-                self._processor = AutoProcessor.from_pretrained(self._config.model_id)
-                self._processor.tokenizer = _tokenizer
+            model_id = self._config.model_id
+
+            # Prefer local cache to avoid Hub auth issues with gated models.
+            _local_first = not self._config.force_download
+
+            if "mistral" in model_id.lower():
+                self._processor = self._load_mistral_processor(model_id, local_first=_local_first)
             else:
-                self._processor = AutoProcessor.from_pretrained(self._config.model_id)
+                self._processor = self._load_processor(model_id, local_first=_local_first)
+
+    def _load_processor(self, model_id: str, *, local_first: bool = True) -> Any:
+        """Load an AutoProcessor, trying local cache first."""
+        if local_first:
+            try:
+                return AutoProcessor.from_pretrained(model_id, local_files_only=True)
+            except OSError:
+                LOGGER.info("Processor not in local cache — downloading from Hub.")
+        return AutoProcessor.from_pretrained(model_id)
+
+    def _load_mistral_processor(self, model_id: str, *, local_first: bool = True) -> Any:
+        """Load a Mistral processor with optional tokenizer regex fix."""
+        # fix_mistral_regex is a tokenizer-level flag and is not forwarded
+        # by AutoProcessor to its internal tokenizer. Load the tokenizer
+        # explicitly with the flag, then replace the one inside the processor.
+        # See: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84
+        #
+        # fix_mistral_regex=True only applies to LlamaTokenizerFast-backed tokenizers
+        # (older Mistral models using SentencePiece). Newer Mistral models (e.g.
+        # Mistral-Small-3.1 / Mistral-Small-4) use the Tekken tokenizer, which is a
+        # native Rust TokenizersBackend and does not need — or support — this flag.
+        # Passing fix_mistral_regex=True to a TokenizersBackend tokenizer raises:
+        #   AttributeError: 'tokenizers.Tokenizer' has no attribute 'backend_tokenizer'
+        # because the fix modifies internal Python-level attributes that only exist
+        # in the SentencePiece-derived fast tokenizer.
+        #
+        # Strategy: check the tokenizer class declared in the config first; only set
+        # fix_mistral_regex=True for LlamaTokenizerFast-based models.
+        from transformers import AutoTokenizer
+        from transformers import AutoConfig as _AutoCfg
+
+        _load_kw: dict[str, Any] = {}
+        if local_first:
+            _load_kw["local_files_only"] = True
+
+        try:
+            _repo_cfg = _AutoCfg.from_pretrained(model_id, **_load_kw)
+        except OSError:
+            if local_first:
+                LOGGER.info("Mistral config not in local cache — downloading from Hub.")
+                _load_kw.pop("local_files_only", None)
+                _repo_cfg = _AutoCfg.from_pretrained(model_id)
+            else:
+                raise
+
+        _tok_class = getattr(_repo_cfg, "tokenizer_class", None)
+        _needs_regex_fix = _tok_class == "LlamaTokenizerFast"
+
+        if _needs_regex_fix:
+            LOGGER.info(
+                "Mistral model with LlamaTokenizerFast detected — "
+                "loading tokenizer with fix_mistral_regex=True"
+            )
+            _tokenizer = AutoTokenizer.from_pretrained(model_id, fix_mistral_regex=True, **_load_kw)
+        else:
+            LOGGER.info(
+                "Mistral model with %s detected — "
+                "fix_mistral_regex not applicable, loading tokenizer normally",
+                _tok_class or "unknown tokenizer class",
+            )
+            _tokenizer = AutoTokenizer.from_pretrained(model_id, **_load_kw)
+
+        processor = self._load_processor(model_id, local_first=local_first)
+        processor.tokenizer = _tokenizer
+        return processor
 
     def _emit(
         self,
@@ -477,22 +532,39 @@ def _resolve_model_device(model: Any) -> torch.device:
 
 
 def _load_multimodal_model(model_id: str, dtype: torch.dtype, *, quantize_4bit: bool = False, force_download: bool = False, config: ServingConfig | None = None):
+    _import_transformers()  # lazy-load AutoModelForMultimodalLM
     # Using AutoModelForMultimodalLM so that Gemma 4, Mistral 3/4, and any other
     # multimodal model registered in transformers can be loaded by HF model ID
     # without code changes. Both Gemma4Config and Mistral3/4Config are registered
     # in transformers 5.5.0. AutoModelForCausalLM must NOT be used — it rejects
     # image/audio tensor inputs.
     LOGGER.info("Loading model with AutoModelForMultimodalLM: %s", model_id)
+    load_kwargs = _build_model_load_kwargs(
+        dtype, quantize_4bit=quantize_4bit, force_download=force_download, config=config,
+    )
+
+    # Try local cache first to avoid a network round-trip to HuggingFace Hub.
+    # Gated models (Gemma 4, etc.) hang indefinitely when `from_pretrained`
+    # checks for updates without a valid HF_TOKEN.  Using `local_files_only`
+    # on the first attempt skips the Hub call entirely.
+    if not force_download:
+        try:
+            model = AutoModelForMultimodalLM.from_pretrained(
+                model_id, local_files_only=True, **load_kwargs,
+            )
+            LOGGER.info("Loaded model from local cache (no network).")
+            return model
+        except OSError:
+            LOGGER.info("Model not in local cache — downloading from Hub.")
+
     try:
-        return AutoModelForMultimodalLM.from_pretrained(
-            model_id,
-            **_build_model_load_kwargs(dtype, quantize_4bit=quantize_4bit, force_download=force_download, config=config),
-        )
+        return AutoModelForMultimodalLM.from_pretrained(model_id, **load_kwargs)
     except Exception as error:
         raise RuntimeError(
             f"Failed to load model '{model_id}' as AutoModelForMultimodalLM. "
             f"Ensure the model ID is a supported multimodal checkpoint "
             f"(e.g. google/gemma-4-E2B-it, mistralai/Mistral-Small-3.1-24B-Instruct-2503). "
+            f"If the model is gated, set HF_TOKEN in model-serving/.env. "
             f"Original error: {error}"
         ) from error
 
@@ -507,16 +579,31 @@ def _is_text_only(messages: list[dict[str, Any]]) -> bool:
     return True
 
 
+# import re as _re
+
+# # Patterns for special tokens that may leak into responses if skip_special_tokens
+# # doesn't catch them (e.g. partial decoding, streamer edge cases).
+# _SPECIAL_TOKEN_RE = _re.compile(
+#     r"<end_of_turn>|<start_of_turn>(?:model|user)?|<eos>|<bos>|<pad>",
+#     _re.IGNORECASE,
+# )
+
+
+def _strip_special_tokens(text: str) -> str:
+    """Remove any leftover special-token markers from decoded text."""
+    return text # _SPECIAL_TOKEN_RE.sub("", text).strip()
+
+
 def _parse_response(processor: Any, response: str) -> str:
     if hasattr(processor, "parse_response"):
         try:
             parsed = processor.parse_response(response)
             extracted = _extract_text_from_parsed(parsed)
             if extracted:
-                return extracted
+                return _strip_special_tokens(extracted)
         except Exception as error:  # pragma: no cover - parser fallback
-            LOGGER.warning("Gemma response parsing failed: %s", error)
-    return response.strip()
+            LOGGER.debug("Processor.parse_response unavailable: %s", error)
+    return _strip_special_tokens(response)
 
 
 def _extract_text_from_parsed(parsed: Any) -> str:
@@ -784,3 +871,7 @@ def _build_model_load_kwargs(dtype: torch.dtype, *, quantize_4bit: bool = False,
         kwargs["device_map"] = "cpu"
     
     return kwargs
+
+
+# Backward-compat alias
+GemmaService = ModelService

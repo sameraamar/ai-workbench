@@ -62,9 +62,6 @@ class SandboxService:
     def get_active_model_id(self) -> str | None:
         return self._client.get_active_model_id()
 
-    def load_model(self, model_id: str) -> dict:
-        return self._client.load_model(model_id)
-
     def run(
         self,
         user_prompt: str,

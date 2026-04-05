@@ -253,7 +253,7 @@ def create_low_cost_app(
         # CUDA Environment Check at Startup
         import torch
         print("\n" + "=" * 70)
-        print("🚀 GEMMA MODEL SERVING - GPU/CUDA STATUS")
+        print("🚀 MODEL SERVING - GPU/CUDA STATUS")
         print("=" * 70)
         print(f"PyTorch Version: {torch.__version__}")
         print(f"CUDA Available: {torch.cuda.is_available()}")
@@ -276,28 +276,28 @@ def create_low_cost_app(
         yield
         runtime.stop()
 
-    app = FastAPI(title="Gemma Model Serving", lifespan=lifespan)
+    app = FastAPI(title="Model Serving", lifespan=lifespan)
 
-    _gemma_service = gemma_service
+    _model_service = gemma_service  # backward-compat param name
     _active_model_id: str | None = None
 
-    def _get_gemma_service(model_id: str | None = None):
-        nonlocal _gemma_service, _active_model_id
-        from gemma_serving.config import ServingConfig
-        from gemma_serving.gemma_service import GemmaService
+    def _get_model_service(model_id: str | None = None):
+        nonlocal _model_service, _active_model_id
+        from model_serving.config import ServingConfig
+        from model_serving.model_service import ModelService
 
         if model_id and model_id != _active_model_id:
-            _gemma_service = GemmaService(ServingConfig(model_id=model_id))
+            _model_service = ModelService(ServingConfig(model_id=model_id))
             _active_model_id = model_id
-        elif _gemma_service is None:
+        elif _model_service is None:
             config = ServingConfig()
-            _gemma_service = GemmaService(config)
+            _model_service = ModelService(config)
             _active_model_id = config.model_id
-        return _gemma_service
+        return _model_service
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        service = _gemma_service
+        service = _model_service
         return {
             "status": "ok",
             "active_model_id": _active_model_id,
@@ -309,7 +309,7 @@ def create_low_cost_app(
 
     @app.post("/models/load", response_model=LoadModelResponse)
     def load_model(request: LoadModelRequest) -> LoadModelResponse:
-        service = _get_gemma_service(request.model_id)
+        service = _get_model_service(request.model_id)
         try:
             service.ensure_loaded()
             return LoadModelResponse(
@@ -325,9 +325,9 @@ def create_low_cost_app(
 
     @app.post("/generate", response_model=GenerateResponse)
     def generate(request: GenerateRequest) -> GenerateResponse:
-        from gemma_serving.config import GenerationSettings
+        from model_serving.config import GenerationSettings
 
-        service = _get_gemma_service(request.model_id)
+        service = _get_model_service(request.model_id)
         settings = GenerationSettings(
             temperature=request.temperature,
             top_p=request.top_p,
@@ -360,11 +360,20 @@ def create_low_cost_app(
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Job not found") from error
 
+    # --- OpenAI-compatible routes (/v1/models, /v1/chat/completions) ------
+    from model_serving.openai_compat import register_openai_routes
+
+    register_openai_routes(
+        app,
+        get_service=_get_model_service,
+        get_active_model_id=lambda: _active_model_id,
+    )
+
     return app
 
 
 def create_demo_app() -> FastAPI:
-    from gemma_serving.gateway import build_gateway_from_env
+    from model_serving.gateway import build_gateway_from_env
 
     return create_low_cost_app(gateway=build_gateway_from_env())
 

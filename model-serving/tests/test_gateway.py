@@ -1,9 +1,9 @@
-from gemma_serving.config import ServingConfig
-from gemma_serving.gateway import GemmaLowCostGateway
-from gemma_serving.app import AttributeExtractionRequest, ListingRewriteRequest
+from model_serving.config import ServingConfig
+from model_serving.gateway import ModelGateway
+from model_serving.app import AttributeExtractionRequest, ListingRewriteRequest
 
 
-class FakeGemmaService:
+class FakeModelService:
     def __init__(self, response_text: str) -> None:
         self._response_text = response_text
         self.messages = None
@@ -18,10 +18,10 @@ class FakeGemmaService:
         }
 
 
-def test_rewrite_listing_uses_gemma_json_response() -> None:
-    gateway = GemmaLowCostGateway(
+def test_rewrite_listing_uses_model_json_response() -> None:
+    gateway = ModelGateway(
         config=ServingConfig(),
-        gemma_service=FakeGemmaService('{"title": "eBay title", "description": "Cleaned description"}'),
+        model_service=FakeModelService('{"title": "eBay title", "description": "Cleaned description"}'),
     )
 
     result = gateway.rewrite_listing(
@@ -39,9 +39,9 @@ def test_rewrite_listing_uses_gemma_json_response() -> None:
 
 
 def test_extract_attributes_limits_images_and_returns_metadata() -> None:
-    gateway = GemmaLowCostGateway(
+    gateway = ModelGateway(
         config=ServingConfig(),
-        gemma_service=FakeGemmaService('{"suggested_attributes": {"material": "silver"}}'),
+        model_service=FakeModelService('{"suggested_attributes": {"material": "silver"}}'),
     )
 
     result = gateway.extract_attributes(

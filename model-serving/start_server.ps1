@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
-    Start the Gemma 4 Model Server with .env loading and PYTHONPATH setup.
+    Start the Model Serving API with .env loading and PYTHONPATH setup.
 .DESCRIPTION
     Loads .env, sets PYTHONPATH to src/, prints config summary, runs uvicorn with reload.
+    Supports any model registered in model_profiles (Gemma 4, Mistral, etc.).
 #>
 param(
     [string]$Host_ = "127.0.0.1",
@@ -15,7 +16,7 @@ $ErrorActionPreference = "Stop"
 
 Push-Location $PSScriptRoot
 try {
-    Write-Host "`u{1F680} Starting Gemma 4 Model Server" -ForegroundColor Cyan
+    Write-Host "`u{1F680} Starting Model Server" -ForegroundColor Cyan
     Write-Host ("=" * 50)
 
     # --- Load .env --------------------------------------------------------
@@ -61,7 +62,7 @@ try {
     # --- Launch uvicorn ----------------------------------------------------
     $uvicornArgs = @(
         "-m", "uvicorn",
-        "gemma_serving.app:app",
+        "model_serving.app:app",
         "--host", $Host_,
         "--port", $Port
     )

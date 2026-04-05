@@ -35,13 +35,13 @@ Gemma 4 does not natively synthesize images, video, or audio. The sandbox must n
 
 ### Multi-Model Vision
 
-The three-project architecture is intentionally model-agnostic at the API boundary. The UI talks to model-serving through a generic `POST /generate` contract (messages in, text out) and has no knowledge of which model is loaded. This means:
+The three-project architecture is intentionally model-agnostic at the API boundary. The UI talks to the serving backend through the OpenAI-compatible `/v1/chat/completions` contract and has no knowledge of which model or engine is loaded. This means:
 
-- Swapping Gemma for another HF model (Llama, Phi, Mistral, Qwen, etc.) requires changes only inside `model-serving/`, not in the UI.
-- The serving layer could host multiple models behind the same endpoint, selected by a request field.
-- The UI's ability modes, prompt presets, and conversation state are model-independent.
+- Swapping Gemma for another model (Llama, Phi, Mistral, Qwen, etc.) requires only changing the `MODEL_ID` in `.env.vllm` and restarting the vLLM server.
+- The serving layer can host any model that vLLM supports — no code changes needed.
+- The UI's model profiles, system prompt, and conversation state are model-independent.
 
-This is a design intent, not a current requirement. No multi-model code exists yet. When a second model is added, the loader in `gemma_service.py` should switch from `Gemma4ForConditionalGeneration` (explicit, Gemma-only) to `AutoModelForMultimodalLM` (registered for Gemma 3/4, Mistral 3/4, Llama 4, and 70+ other multimodal architectures in transformers 5.5.0). `AutoModelForCausalLM` is **not** suitable because it is text-only and does not accept image or audio tensors. The API contract and UI should remain stable across this change.
+Multi-model support is now live. `model_profiles.py` registers Gemma 4 (E2B, E4B, 26B A4B, 31B) and Mistral Small 3.1 (24B) with per-model capability flags (image, audio, video). The UI gates media input controls based on these capabilities.
 
 ## Sandbox Concept
 
@@ -49,19 +49,9 @@ The user enters a single conversation room — a persistent multimodal chat thre
 include an attached image, audio file, or video. There is no per-session ability or mode selector.
 The model sees the full conversation history on every request.
 
-The **persona** controls Gemma’s behavior for the whole session via the system prompt:
-
-- **Creator Studio / Incident Desk / Learning Lab / Freeplay** — general-purpose conversational personas.
-- **Image Prompt Engineer** — primes Gemma to produce structured image prompt packs (Concept, Final Prompt,
-  Negative Prompt, Style Notes, Composition Notes, Model Handoff Notes).
-- **Storyboard Director** — primes Gemma to produce storyboards (Concept, Hook, Storyboard, Shot List,
-  Motion Notes, Audio Notes, Model Handoff Notes).
-- **Audio Producer** — primes Gemma to produce audio production plans (Concept, Script, Voice Direction,
-  Sound Design, Timing Plan, Model Handoff Notes).
-- **Custom** — blank system prompt; user types their own.
-
-The planning personas use Gemma’s text generation capability only. They do not produce pixels,
-audio waveforms, or rendered video.
+The **system prompt** is a free-form text area that the user edits directly. There are no
+pre-built persona presets — the user controls framing, role, and output format entirely
+through the system prompt. This replaced the earlier persona dropdown.
 
 ## Users And Personas
 
@@ -76,10 +66,10 @@ Some persona details are still To Be Discovered.
 
 - The UI always operates in conversation mode. Every turn contributes to a persistent thread passed to the model.
 - The user may attach an image, audio file, or video to any turn. Media type is detected automatically from the file extension.
-- The persona selector controls Gemma’s system prompt for the session. Planning personas (Image Prompt Engineer, Storyboard Director, Audio Producer) replace the previous output-mode selector.
-- The UI must let users switch among curated Gemma 4 model profiles and optionally enter a custom model ID.
-- The UI must let users edit the system prompt and choose whether text responses stream or arrive in one shot.
-- The app must route all Gemma calls through a reusable service module.
+
+- The UI must let users switch among curated model profiles (Gemma 4 + Mistral) and optionally enter a custom model ID.
+- The UI must let users edit the system prompt directly (free-form text area) and choose whether text responses stream or arrive in one shot.
+- The app must route all model calls through `ServingClient`, which talks to the vLLM backend's OpenAI-compatible API.
 - The app must apply the standardized sampling defaults:
   - temperature = 1.0
   - top_p = 0.95
@@ -103,33 +93,41 @@ The repository is split into three independent projects under a single git root.
 
 ```
 ai-sandbox/
-├── model-serving/          # FastAPI backend — owns all model weights and inference
-│   ├── src/gemma_serving/  # Python package
-│   │   ├── app.py          # FastAPI application (POST /generate, job endpoints, /health)
-│   │   ├── config.py       # ServingConfig dataclass
-│   │   ├── gemma_service.py# Core Gemma 4 inference (text + multimodal)
-│   │   ├── gateway.py      # GemmaLowCostGateway for marketplace operations
-│   │   ├── domain.py, planning.py, simulation.py, benchmarking.py, benchmark_targets.py
+├── vllm-serving/           # vLLM launch scripts and config (WSL2/Linux only)
+│   ├── .env.vllm           # vLLM server config (MODEL_ID, port, VRAM, quantization)
+│   ├── start.sh            # Bash launcher for vLLM (WSL2/Linux)
+│   ├── start_vllm.ps1      # Windows PowerShell wrapper (delegates to WSL2)
+│   └── setup_vllm.sh       # One-time vLLM install script for WSL2
+├── model-serving/          # Model-serving backend (Windows-native Transformers + planning)
+│   ├── src/model_serving/  # Python package
+│   │   ├── planning/       # Capacity planning, benchmarking, simulation subpackage
+│   │   │   ├── planning.py
+│   │   │   ├── simulation.py
+│   │   │   ├── benchmarking.py
+│   │   │   └── benchmark_targets.py
+│   │   ├── app.py, config.py, domain.py, gateway.py
+│   │   ├── model_service.py, openai_compat.py
 │   │   └── __init__.py
-│   ├── tests/              # 24 tests
-│   ├── docs/scenarios/     # Benchmark scenario JSON files
-│   ├── requirements.txt    # torch, transformers, fastapi, uvicorn (no streamlit)
-│   └── .env.example
-├── ui/                     # Streamlit frontend — no model weights, calls model-serving over HTTP
+│   ├── tests/              # Unit tests
+│   └── requirements.txt
+├── ui/                     # Streamlit frontend — no model weights, calls vLLM over HTTP
 │   ├── src/gemma_sandbox/  # Python package
 │   │   ├── services/
-│   │   │   ├── serving_client.py  # httpx client calling POST /generate
+│   │   │   ├── serving_client.py  # httpx client calling /v1/chat/completions (OpenAI API)
 │   │   │   └── sandbox_service.py # Sandbox orchestration
 │   │   ├── config.py       # AppConfig with serving_url
+│   │   ├── model_profiles.py # Model registry with per-model capabilities
 │   │   ├── domain.py, media.py, prompts.py
 │   │   └── __init__.py
-│   ├── tests/              # 4 tests
+│   ├── tests/              # 12 tests
 │   ├── app.py              # Streamlit entry point
 │   ├── env_bootstrap.py
 │   ├── .streamlit/config.toml
 │   ├── requirements.txt    # streamlit, httpx, Pillow (no torch)
 │   └── .env.example
 ├── playground/             # Standalone demo and benchmark scripts
+│   ├── vllm_gemma4.py      # vLLM smoke test for Gemma 4
+│   ├── vllm_mistral.py     # vLLM smoke test for Mistral Small 3.1
 │   ├── gemma4_text_demo.py
 │   ├── benchmark_runner.py
 │   ├── concurrency_simulation.py
@@ -139,20 +137,26 @@ ai-sandbox/
 
 ### Layers
 
-1. Model-serving FastAPI layer (`model-serving/`)
-   - Loads the model lazily on first `/generate` request (currently Gemma 4, but the `POST /generate` contract is model-agnostic)
-   - Exposes `POST /generate` for generic text and multimodal inference
-   - Exposes job-based endpoints for marketplace operations (rewrite, extract-attributes)
-   - Applies standardized generation defaults
-   - Supports 4-bit NF4 quantization via `BitsAndBytesConfig`
-   - Supports `low_cpu_mem_usage` for faster weight loading
-   - Reports timing, token counts, and memory metadata in response payloads
+1. vLLM layer (`vllm-serving/`)
+   - vLLM runs as a standalone server inside WSL2 (or native Linux), launched via `start.sh`
+   - Exposes the OpenAI-compatible API: `POST /v1/chat/completions`, `GET /v1/models`, `GET /health`
+   - Supports any model vLLM can load — swap models by changing `MODEL_ID` in `.env.vllm`
+   - Auto-detects Mistral models and applies `--tokenizer_mode mistral` flags
+   - Memory management handled by vLLM’s PagedAttention — no manual OOM guard
+   - Supports AWQ quantization for large models (24B+) on RTX 3090
+   - Windows users launch via `start_vllm.ps1` which delegates to WSL2
+   - Contains zero Python application code — only shell scripts and config
+
+2. Model-serving layer (`model-serving/`)
+   - Windows-native Transformers-based inference with OpenAI shim
+   - `planning/` subpackage contains capacity planning, benchmarking, and simulation utilities
+   - The old Transformers-based `gemma_serving/` package name was renamed to `model_serving` (see ADR-0002)
 
 2. Streamlit UI layer (`ui/`)
    - Collects output mode, prompt, and optional media attachment per turn
-   - Calls model-serving over HTTP via `ServingClient`
+   - Calls the vLLM backend over HTTP via `ServingClient` (OpenAI-compatible API)
    - Has no model weights or torch dependency
-   - Lets the user choose among curated Gemma 4 checkpoints or enter a custom model ID
+   - Lets the user choose among curated model profiles (Gemma 4 + Mistral) or enter a custom model ID
    - Lets the user edit the system prompt used for the run
    - Lets the user switch text generation between streaming and one-shot delivery
    - Always operates in conversation mode — uses `st.chat_input` for all turns, shows a persistent multi-turn thread
@@ -191,10 +195,8 @@ Each completed run should surface enough metadata to make local comparisons mean
 
 ### Prompt Controls
 
-- The system prompt is driven entirely by the persona selector. Planning personas include structured
-  output instructions directly in the system prompt so users get production artifacts without having
-  to choose a separate mode.
-- Text generation can run in streaming mode for live feedback or one-shot mode for a single final response.
+- The system prompt is a free-form text area edited by the user directly. There are no persona presets.
+- Text generation can run in streaming mode (SSE from vLLM) for live feedback or one-shot mode for a single final response.
 - The conversation thread is always active and always sent to the model as `prior_turns`. Every turn’s
   media attachments are embedded in the history as content parts so multimodal follow-ups work naturally.
 - Video files are sampled into representative frames before being sent; the frame paths are embedded in
@@ -204,17 +206,14 @@ Each completed run should surface enough metadata to make local comparisons mean
 
 - Python for the application language
 - Streamlit for the UI (in `ui/`)
-- FastAPI + Uvicorn for model serving (in `model-serving/`)
+- vLLM for model serving (runs in WSL2/Linux, exposes OpenAI-compatible API)
 - httpx for UI-to-serving HTTP communication
-- Hugging Face Transformers for Gemma integration
-- PyTorch for model execution
-- BitsAndBytesConfig for optional 4-bit NF4 quantization
-- Torchvision for multimodal image-processing dependencies used by Transformers
 - OpenCV for video frame extraction
 - Pillow and SoundFile for local media handling
 - Pytest with per-project test folders for unit tests
 - Python dotenv for local environment configuration
 - Standalone playground scripts for colleague handoff and quick local verification
+- vLLM handles model loading, quantization (AWQ), PagedAttention memory management, and streaming — replacing the hand-rolled Transformers inference stack
 
 ## Capability Boundaries
 
@@ -242,16 +241,17 @@ They do not produce pixels, audio waveforms, or rendered video.
 - Streamlit file watching can trigger noisy or failing lazy imports inside Transformers, so the starter app disables file watching in local configuration.
 - Cold starts can be lengthy because processor download, model download, and weight loading may all happen on the first request. The UI and logs should report these stages clearly.
 - Local runtime settings should live in `.env`, with `.env.example` as the tracked template. Python path additions should be applied through the environment bootstrap rather than scattered per entrypoint.
-- Adding a second model should only require changes inside `model-serving/`. If a change forces UI modifications, the API contract needs redesigning first.
+- Adding a second model should only require adding an entry to `model_profiles.py` and setting the `MODEL_ID` in `.env.vllm`. If a change forces UI modifications beyond model_profiles, the architecture needs redesigning first.
+- The backend is dual-mode: vLLM in WSL2 (recommended) or Windows-native Transformers + OpenAI shim. Both expose the same `/v1/chat/completions` API. See [ADR-0003](../decisions/ADR-0003-dual-mode-serving.md).
 
 ## Testing Strategy
 
 Each project has its own test folder and `PYTHONPATH` root:
 
-- `model-serving/tests/` (24 tests) — run with `PYTHONPATH=model-serving/src`
-- `ui/tests/` (4 tests) — run with `PYTHONPATH=ui/src`
+- `model-serving/tests/` (24 tests, legacy — pending update for vLLM migration) — run with `PYTHONPATH=model-serving/src`
+- `ui/tests/` (12 tests) — run with `PYTHONPATH=ui/src`
 
-Tests focus on deterministic prompt-building, orchestration logic, and API contract validation using fakes and mocks rather than real model weights.
+Tests focus on deterministic prompt-building, orchestration logic, model profile validation, and API contract validation using fakes and mocks rather than real model weights.
 
 ### Performance and Load Testing
 
@@ -269,11 +269,39 @@ The load testing tool supports:
 
 ## Deployment And Operations
 
-The current target is local prototype usage with two processes:
+The current target is local prototype usage.  Two serving modes are supported
+(see [ADR-0003](../decisions/ADR-0003-dual-mode-serving.md) for rationale):
 
-1. Start model-serving: `cd model-serving && PYTHONPATH=src uvicorn gemma_serving.app:app --host 0.0.0.0 --port 8000`
-2. Start UI: `cd ui && PYTHONPATH=src streamlit run app.py`
+### Mode 1: vLLM (recommended)
 
-The UI connects to model-serving at `http://localhost:8000` by default (configurable via `SERVING_URL` in `ui/.env`).
+```powershell
+# One-time WSL2 setup:
+wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/.../vllm-serving && bash setup_vllm.sh"
+
+# Start vLLM:
+cd vllm-serving
+.\start_vllm.ps1                           # default model
+.\start_vllm.ps1 -Model "solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ"
+```
+
+vLLM config lives in `vllm-serving/.env.vllm`.
+
+### Mode 2: Windows-native (quick iteration, no WSL2)
+
+```powershell
+cd model-serving
+python start_server.py    # or .\start_server.ps1
+```
+
+Serves the same OpenAI-compatible endpoints via the built-in shim (`openai_compat.py`).
+
+### UI (same for both modes)
+
+```powershell
+cd ui
+$env:PYTHONPATH="src"; streamlit run app.py
+```
+
+The UI connects to `http://localhost:8000` by default (configurable via `SERVING_URL` in `ui/.env`).
 
 Serving research for potential multi-user deployment, including model tradeoffs, concurrency assumptions, and cost planning, is tracked in [docs/research/gemma4-serving-evaluation.md](../research/gemma4-serving-evaluation.md).

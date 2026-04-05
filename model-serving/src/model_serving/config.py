@@ -4,31 +4,39 @@ from dataclasses import dataclass, field
 import os
 
 
-DEFAULT_MODEL_ID = os.getenv("GEMMA_MODEL_ID", "google/gemma-4-E2B-it")
-MODEL_CACHE_DIR: str | None = os.getenv("GEMMA_MODEL_CACHE_DIR", None)
-FORCE_DOWNLOAD: bool = os.getenv("GEMMA_FORCE_DOWNLOAD", "0").strip().lower() in ("1", "true", "yes")
-QUANTIZE_4BIT: bool = os.getenv("GEMMA_QUANTIZE_4BIT", "0").strip().lower() in ("1", "true", "yes")
+def _env(new: str, old: str, default: str = "") -> str:
+    """Read *new* env-var, fall back to *old* for backward compat."""
+    return os.getenv(new) or os.getenv(old, default)
+
+
+def _env_bool(new: str, old: str, default: str = "0") -> bool:
+    return _env(new, old, default).strip().lower() in ("1", "true", "yes")
+
+
+DEFAULT_MODEL_ID = _env("MODEL_ID", "GEMMA_MODEL_ID", "google/gemma-4-E2B-it")
+MODEL_CACHE_DIR: str | None = _env("MODEL_CACHE_DIR", "GEMMA_MODEL_CACHE_DIR") or None
+FORCE_DOWNLOAD: bool = _env_bool("MODEL_FORCE_DOWNLOAD", "GEMMA_FORCE_DOWNLOAD")
+QUANTIZE_4BIT: bool = _env_bool("MODEL_QUANTIZE_4BIT", "GEMMA_QUANTIZE_4BIT")
 
 # GPU Configuration
-FORCE_CPU: bool = os.getenv("GEMMA_FORCE_CPU", "0").strip().lower() in ("1", "true", "yes")
+FORCE_CPU: bool = _env_bool("MODEL_FORCE_CPU", "GEMMA_FORCE_CPU")
 GPU_ID: int | None = None
-gpu_id_str = os.getenv("GEMMA_GPU_ID", "").strip()
+gpu_id_str = _env("MODEL_GPU_ID", "GEMMA_GPU_ID").strip()
 if gpu_id_str and gpu_id_str != "-1":
     try:
         GPU_ID = int(gpu_id_str)
     except ValueError:
         GPU_ID = None
-DEVICE_MAP: str = os.getenv("GEMMA_DEVICE_MAP", "auto")  # "auto", "cpu", or specific mapping
+DEVICE_MAP: str = _env("MODEL_DEVICE_MAP", "GEMMA_DEVICE_MAP", "auto")
 
 # Performance Optimization Configuration
-ENABLE_TORCH_COMPILE: bool = os.getenv("GEMMA_TORCH_COMPILE", "1").strip().lower() in ("1", "true", "yes")
-ENABLE_FLASH_ATTENTION: bool = os.getenv("GEMMA_FLASH_ATTENTION", "1").strip().lower() in ("1", "true", "yes")
-ENABLE_MEMORY_OPTIMIZATIONS: bool = os.getenv("GEMMA_MEMORY_OPT", "1").strip().lower() in ("1", "true", "yes")
-OPTIMIZE_FOR_INFERENCE: bool = os.getenv("GEMMA_INFERENCE_OPT", "1").strip().lower() in ("1", "true", "yes")
-TORCH_COMPILE_MODE: str = os.getenv("GEMMA_COMPILE_MODE", "default")  # "default", "reduce-overhead", "max-autotune"
+ENABLE_TORCH_COMPILE: bool = _env_bool("MODEL_TORCH_COMPILE", "GEMMA_TORCH_COMPILE", "1")
+ENABLE_FLASH_ATTENTION: bool = _env_bool("MODEL_FLASH_ATTENTION", "GEMMA_FLASH_ATTENTION", "1")
+ENABLE_MEMORY_OPTIMIZATIONS: bool = _env_bool("MODEL_MEMORY_OPT", "GEMMA_MEMORY_OPT", "1")
+OPTIMIZE_FOR_INFERENCE: bool = _env_bool("MODEL_INFERENCE_OPT", "GEMMA_INFERENCE_OPT", "1")
+TORCH_COMPILE_MODE: str = _env("MODEL_COMPILE_MODE", "GEMMA_COMPILE_MODE", "default")
 # Safety cap on input tokens before generation to prevent OOM on long prompts.
-# At fp16 with eager/sdpa attention on RTX 3090, ~8192 tokens is a safe ceiling.
-MAX_INPUT_TOKENS: int = int(os.getenv("GEMMA_MAX_INPUT_TOKENS", "8192"))
+MAX_INPUT_TOKENS: int = int(_env("MODEL_MAX_INPUT_TOKENS", "GEMMA_MAX_INPUT_TOKENS", "8192"))
 
 
 @dataclass

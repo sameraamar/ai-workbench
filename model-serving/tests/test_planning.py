@@ -1,6 +1,6 @@
 import pytest
 
-from gemma_serving import (
+from model_serving import (
     TrafficProfile,
     estimate_concurrent_requests,
     estimate_cost_per_request,

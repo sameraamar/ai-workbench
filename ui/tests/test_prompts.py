@@ -1,10 +1,12 @@
 """Tests for model_profiles.py (replaces legacy persona-preset tests)."""
 from gemma_sandbox.model_profiles import (
+    DISABLED_LABELS,
     MODEL_LABELS,
     MODEL_PROFILES,
     ModelCapabilities,
     get_capabilities,
     get_model_id,
+    model_labels_for_backend,
 )
 
 
@@ -42,5 +44,25 @@ def test_get_model_id_fallback_for_unknown() -> None:
     assert mid == "some/default"
 
 
-def test_model_labels_has_all_profiles() -> None:
-    assert MODEL_LABELS == list(MODEL_PROFILES.keys())
+def test_model_labels_excludes_disabled() -> None:
+    expected = [k for k in MODEL_PROFILES if k not in DISABLED_LABELS]
+    assert MODEL_LABELS == expected
+
+
+def test_mistral_small_3_1_is_enabled() -> None:
+    """Both Mistral Small 3.1 variants (BF16 and AWQ) should be in MODEL_LABELS."""
+    assert "Mistral Small 3.1 (24B)" in MODEL_LABELS
+    assert "Mistral Small 3.1 AWQ (24B)" in MODEL_LABELS
+
+
+def test_awq_hidden_on_native_backend() -> None:
+    """AWQ models (vllm_only) must not appear in the native backend dropdown."""
+    native_labels = model_labels_for_backend("native")
+    assert "Mistral Small 3.1 AWQ (24B)" not in native_labels
+    assert "Mistral Small 3.1 (24B)" in native_labels
+
+
+def test_awq_visible_on_vllm_backend() -> None:
+    """AWQ models should appear in the vLLM backend dropdown."""
+    vllm_labels = model_labels_for_backend("vllm")
+    assert "Mistral Small 3.1 AWQ (24B)" in vllm_labels

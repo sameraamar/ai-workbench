@@ -8,7 +8,8 @@ The UI and model-serving backend communicate through a generic `POST /generate` 
 
 | Folder | Purpose | Entry point |
 |---|---|---|
-| `model-serving/` | FastAPI model-serving backend (loads Gemma, exposes `/generate` and job endpoints) | `start_server.ps1` |
+| `vllm-serving/` | vLLM launch scripts and config (WSL2/Linux) | `start_vllm.ps1` or `start.sh` |
+| `model-serving/` | Model-serving backend (Windows-native Transformers), planning subpackage | `start_server.ps1` |
 | `ui/` | Streamlit sandbox UI (calls model-serving over HTTP) | `streamlit run ui/app.py` |
 | `playground/` | Standalone demo and benchmark scripts | Individual `.py` files |
 
@@ -44,7 +45,7 @@ GPU Name: NVIDIA GeForce RTX 3090
 
 If CUDA shows `False`, install CUDA-enabled PyTorch:
 ```bash
-pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 ```
 
 ### Measured CPU-Only Baseline
@@ -186,7 +187,7 @@ pip install bitsandbytes
 | Gemma 4 E2B | ~5–6 GB | ~1.5–2 GB | Yes |
 | Gemma 4 E4B | ~9–10 GB | ~4–5 GB | Tight, may OOM on long prompts |
 
-**How it works** (`gemma_service.py` → `_build_model_load_kwargs`):
+**How it works** (`model_service.py` → `_build_model_load_kwargs`):
 - When `GEMMA_QUANTIZE_4BIT=1`, a `BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")` is passed to `from_pretrained()`.
 - Compute dtype remains `bfloat16` on CUDA, so inference math stays in half-precision while weights are stored in 4-bit.
 - `device_map="auto"` still applies — the GPU is used automatically.
@@ -221,38 +222,83 @@ The **Video Storyboard** persona primes Gemma as a video production director, pr
 
 ## Quick Start
 
-```bash
-# Clone and create a virtual environment using Python 3.11
-python -m venv venv
-venv\Scripts\Activate.ps1        # Windows PowerShell
-# source venv/bin/activate        # Linux/macOS
+The project uses **two separate virtual environments** that must never be mixed:
 
-# Install dependencies (both projects share the venv)
+| Environment | Location | Contains | Platform |
+|---|---|---|---|
+| **Windows venv** | `venv/` (repo root) | model-serving (Transformers 5.x), UI (Streamlit), playground | Windows |
+| **WSL2 venv** | `~/vllm-env` (inside WSL2) | vLLM only (bundles its own Transformers <5, PyTorch) | WSL2 / Linux |
+
+> **WARNING:** Never install `vllm`, `compressed-tensors`, or `mistral-common` in the Windows venv.
+> These packages pin `transformers<5.0.0`, which downgrades the version needed by model-serving
+> and causes `ImportError: cannot import name 'AutoModelForMultimodalLM'` at runtime.
+
+### Windows venv setup (model-serving + UI)
+
+```powershell
+# 1. Create and activate the venv (Python 3.11+)
+python -m venv venv
+venv\Scripts\Activate.ps1
+
+# 2. Install CUDA-enabled PyTorch FIRST (skip if CPU-only)
+#    Check https://pytorch.org/get-started/locally/ for the latest command.
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+# 3. Install project dependencies (both projects share this venv)
 pip install -r model-serving/requirements.txt
 pip install -r ui/requirements.txt
 
-# Install CUDA-enabled PyTorch (required for GPU acceleration)
-pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
-
-# Copy and configure environment for each project
-cp model-serving/.env.example model-serving/.env
-# IMPORTANT: set GEMMA_FASTAPI_GATEWAY=gemma in model-serving/.env to enable real model inference
+# 4. Copy and configure environment files
+copy model-serving\.env.example model-serving\.env
+# Set GEMMA_FASTAPI_GATEWAY=gemma in model-serving/.env to enable real model inference
 # (the default "stub" gateway returns empty responses without loading the model)
-cp ui/.env.example ui/.env
+copy ui\.env.example ui\.env
 # Defaults work out-of-box; edit ui/.env only if backend is not at http://localhost:8000
 ```
 
+### WSL2 venv setup (vLLM only)
+
+vLLM does not run natively on Windows. It runs inside WSL2 with its own isolated venv.
+
 ```powershell
-# Start the model-serving API (terminal 1)
+# From Windows PowerShell — one-time setup:
+wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/Users/$USER/source/repos/ai-workbench/vllm-serving && bash setup_vllm.sh"
+```
+
+This creates `~/vllm-env` inside WSL2 with vLLM and its bundled PyTorch/CUDA stack.
+Do **not** install `model-serving/requirements.txt` inside this venv.
+
+### Starting the backend
+
+Two backend modes serve the same OpenAI-compatible API on `http://localhost:8000`.
+The UI works identically with either one.
+
+```powershell
+# Mode 1: vLLM via WSL2 (recommended — PagedAttention, continuous batching)
+cd vllm-serving
+.\start_vllm.ps1                          # default model from .env.vllm
+.\start_vllm.ps1 -Model "google/gemma-4-E4B-it"   # override model
+
+# Mode 2: Windows-native Transformers + OpenAI shim (no WSL2 required)
 cd model-serving
 .\start_server.ps1
 ```
 
+### Starting the UI
+
 ```powershell
-# Start the UI (terminal 2)
+# In a separate terminal (activate the Windows venv first)
 cd ui
 $env:PYTHONPATH = "src"
 streamlit run app.py
+```
+
+### Running tests
+
+```powershell
+# All tests (from repo root, Windows venv activated)
+$env:PYTHONPATH = "model-serving\src;ui\src"
+python -m pytest model-serving/tests/ ui/tests/ -v
 ```
 
 ## Serving Research Toolkit
