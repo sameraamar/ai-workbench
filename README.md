@@ -218,20 +218,20 @@ MODEL_MAX_INPUT_TOKENS=16384
 
 ## Screenshots
 
-### Main View — General Persona
-Sidebar shows the **Load Model** button, **Assistant persona** dropdown, and editable **System prompt**. The chat input stays disabled until a model is loaded. The right panel lists all available personas with the active one marked.
+### Startup — model connected, empty conversation
+Sidebar shows the active model (**Gemma 4 E2B IT**), system prompt, and generation parameters. The right panel shows **Model Capabilities** (Images ✅ Audio ✅ Video ✅) and the model ready badge. The conversation area starts empty.
 
-![AI Workbench — main view with General persona, Load Model button, and system prompt](docs/screenshots/ui-main-view.png)
+![AI Workbench — startup state with Gemma 4 E2B IT connected](docs/screenshots/ui-startup.png)
 
-### Image Prompt Pack Persona
-Switching the persona to **Image Prompt Pack** updates the system prompt to an image production director that generates structured prompt packs with Concept, Final Prompt, Negative Prompt, and Style Notes sections.
+### Text prompt and response
+User message and assistant reply both appear in the chat window. The **Run History** panel on the right shows Turn 1 metrics: response time, tokens/s, token counts (In/Out/Total), cold-start flag, and a collapsible Full metadata block.
 
-![AI Workbench — Image Prompt Pack persona with production-ready system prompt](docs/screenshots/ui-persona-image-prompt.png)
+![AI Workbench — text prompt with assistant response and run metrics](docs/screenshots/ui-text-response.png)
 
-### Video Storyboard Persona
-The **Video Storyboard** persona primes the model as a video production director, producing structured storyboards with Shot Lists, Motion Notes, and Audio Notes.
+### Image upload and visual description
+An image is attached via the **📁 Upload** tab, then described in natural language by the model. The conversation shows two turns (text + image), the attachment label is visible under the user's second message, and the Run History panel shows both Turn 1 and Turn 2 with timing and token stats.
 
-![AI Workbench — Video Storyboard persona with storyboard system prompt](docs/screenshots/ui-persona-video-storyboard.png)
+![AI Workbench — image uploaded and described by the model, two-turn run history](docs/screenshots/ui-image-description.png)
 
 ## Quick Start
 
