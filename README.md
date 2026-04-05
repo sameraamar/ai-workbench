@@ -219,39 +219,6 @@ The **Video Storyboard** persona primes Gemma as a video production director, pr
 
 ![Gemma Sandbox Arena — Video Storyboard persona with storyboard system prompt](docs/screenshots/ui-persona-video-storyboard.png)
 
-## Tests
-
-All tests pass on Python 3.11.
-
-**UI tests** (7/7 passed):
-```
-tests/test_prompts.py::test_persona_presets_include_concise_instruction PASSED
-tests/test_prompts.py::test_planning_personas_exist                    PASSED
-tests/test_prompts.py::test_image_persona_mentions_sections            PASSED
-tests/test_prompts.py::test_storyboard_persona_mentions_sections       PASSED
-tests/test_sandbox_service.py::test_run_includes_prior_turns_in_messages PASSED
-tests/test_sandbox_service.py::test_image_attachment_is_included_in_current_turn PASSED
-tests/test_sandbox_service.py::test_system_prompt_from_config_is_used  PASSED
-```
-
-**Model-serving tests** (24/24 passed):
-```
-tests/test_api.py::test_health_endpoint_reports_ok                     PASSED
-tests/test_api.py::test_rewrite_job_completes                          PASSED
-tests/test_api.py::test_rewrite_cache_returns_immediate_success        PASSED
-tests/test_benchmark_targets.py::test_benchmark_listing_rewrite_uses_scenario_metadata PASSED
-tests/test_benchmark_targets.py::test_benchmark_listing_rewrite_derives_model_id_from_label PASSED
-tests/test_benchmarking.py::test_run_benchmark_returns_summary          PASSED
-tests/test_benchmarking.py::test_load_scenarios_parses_request_mode     PASSED
-tests/test_benchmarking.py::test_simulate_capacity_returns_e2b_and_e4b  PASSED
-tests/test_gateway.py::test_rewrite_listing_uses_gemma_json_response    PASSED
-tests/test_gateway.py::test_extract_attributes_limits_images_and_returns_metadata PASSED
-tests/test_gemma_service.py::test_generate_simple_text                  PASSED
-tests/test_gemma_service.py::test_generate_text_matches_gemma_getting_started_flow PASSED
-tests/test_gemma_service.py::test_generate_text_one_shot_skips_streamer PASSED
-tests/test_planning.py (11 tests)                                       PASSED
-```
-
 ## Quick Start
 
 ```bash
