@@ -366,13 +366,29 @@ def main() -> None:
         _apply_col_spacer, _apply_col_btn = st.columns([0.7, 0.3])
         with _apply_col_btn:
             st.button("Apply", key="_apply_system_prompt", help="Apply system prompt changes (or press Ctrl+Enter)", type="secondary", use_container_width=True)
-        max_new_tokens = st.slider("Max new tokens", min_value=64, max_value=2048, value=256, step=64)
+        max_new_tokens = st.slider("Max new tokens", min_value=64, max_value=2048, value=256, step=64,
+                                     help="Upper limit on generated tokens. The model may stop earlier if it decides the answer is complete (EOS token).")
+        with st.expander("Sampling parameters", expanded=False):
+            temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=1.0, step=0.05,
+                                    help="Controls randomness. 0 = greedy/deterministic, 1 = maximum randomness.")
+            top_p = st.slider("Top-p (nucleus)", min_value=0.0, max_value=1.0, value=0.95, step=0.01,
+                              help="Cumulative probability cutoff. Lower = only highest-probability tokens considered.")
+            top_k = st.slider("Top-k", min_value=1, max_value=200, value=64, step=1,
+                              help="Number of highest-probability tokens to consider at each step.")
         enable_thinking = st.toggle("Enable thinking", value=False)
         stream_output = st.checkbox("Stream text response to UI", value=True)
         wrap_code = st.checkbox("Wrap code blocks", value=False, help="Toggle word-wrap on code blocks. Off = horizontal scroll.")
         st.caption(f"Active model: {_active_model or model_id}")
         st.caption(f"Backend: {'Native (Transformers)' if _is_native_backend else 'vLLM'} · {SERVING_URL}")
-        st.caption("Standardized sampling defaults are locked to temperature=1.0, top_p=0.95, top_k=64.")
+
+    # Apply wrap-code-blocks CSS class toggle via JS
+    _wrap_action = "add" if wrap_code else "remove"
+    _components_html(
+        f"""<script>
+        window.parent.document.querySelector('.stApp').classList.{_wrap_action}('wrap-code-blocks');
+        </script>""",
+        height=0,
+    )
 
     # Use the effective model: on Windows backend the user picks freely;
     # on vLLM the server's model overrides the dropdown.
@@ -394,7 +410,14 @@ def main() -> None:
     config = AppConfig(
         model_id=_effective_model_id,
         system_prompt=system_prompt,
-        generation=GenerationSettings(max_new_tokens=max_new_tokens, enable_thinking=enable_thinking, stream_output=stream_output),
+        generation=GenerationSettings(
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            enable_thinking=enable_thinking,
+            stream_output=stream_output,
+        ),
     )
     sandbox = get_sandbox_service(config)
 
