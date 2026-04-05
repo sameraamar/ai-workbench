@@ -8,7 +8,7 @@ The UI and model-serving backend communicate through a generic `POST /generate` 
 
 | Folder | Purpose | Entry point |
 |---|---|---|
-| `model-serving/` | FastAPI model-serving backend (loads Gemma, exposes `/generate` and job endpoints) | `uvicorn gemma_serving.app:app` |
+| `model-serving/` | FastAPI model-serving backend (loads Gemma, exposes `/generate` and job endpoints) | `start_server.ps1` |
 | `ui/` | Streamlit sandbox UI (calls model-serving over HTTP) | `streamlit run ui/app.py` |
 | `playground/` | Standalone demo and benchmark scripts | Individual `.py` files |
 
@@ -204,48 +204,52 @@ GEMMA_MAX_INPUT_TOKENS=16384
 
 ## Screenshots
 
-### Main View — Text-to-Text Mode
-Sidebar shows the **Load Model** button, **Assistant persona** dropdown, and editable **System prompt**. The Run Sandbox button stays disabled until a model is loaded.
+### Main View — General Persona
+Sidebar shows the **Load Model** button, **Assistant persona** dropdown, and editable **System prompt**. The chat input stays disabled until a model is loaded. The right panel lists all available personas with the active one marked.
 
-![Gemma Sandbox Arena — main view with text-to-text mode, Load Model button, and persona-driven system prompt](docs/screenshots/ui-main-view.png)
+![Gemma Sandbox Arena — main view with General persona, Load Model button, and system prompt](docs/screenshots/ui-main-view.png)
 
-### Conversation Mode
-Enabling **Conversation mode** replaces the prompt box with a chat input that keeps prior turns in context. The "Clear conversation" button resets the thread.
+### Image Prompt Pack Persona
+Switching the persona to **Image Prompt Pack** updates the system prompt to an image production director that generates structured prompt packs with Concept, Final Prompt, Negative Prompt, and Style Notes sections.
 
-![Gemma Sandbox Arena — conversation mode with chat input and turn counter](docs/screenshots/ui-conversation-mode.png)
+![Gemma Sandbox Arena — Image Prompt Pack persona with production-ready system prompt](docs/screenshots/ui-persona-image-prompt.png)
 
-### Image-to-Text Mode with Upload
-Switching the ability to **Image To Text** shows a file uploader for PNG/JPG/JPEG/WEBP images alongside the prompt.
+### Video Storyboard Persona
+The **Video Storyboard** persona primes Gemma as a video production director, producing structured storyboards with Shot Lists, Motion Notes, and Audio Notes.
 
-![Gemma Sandbox Arena — image-to-text mode with file upload](docs/screenshots/ui-image-mode.png)
+![Gemma Sandbox Arena — Video Storyboard persona with storyboard system prompt](docs/screenshots/ui-persona-video-storyboard.png)
 
 ## Tests
 
-All tests pass on Python 3.9+.
+All tests pass on Python 3.11.
 
-**UI tests** (5/5 passed):
+**UI tests** (7/7 passed):
 ```
-tests/test_prompts.py::test_text_prompt_returns_user_input              PASSED
 tests/test_prompts.py::test_persona_presets_include_concise_instruction PASSED
-tests/test_prompts.py::test_simulation_prompt_marks_non_native_mode     PASSED
-tests/test_prompts.py::test_ability_specs_label_simulated_modes         PASSED
-tests/test_sandbox_service.py::test_text_run_includes_prior_conversation_messages PASSED
+tests/test_prompts.py::test_planning_personas_exist                    PASSED
+tests/test_prompts.py::test_image_persona_mentions_sections            PASSED
+tests/test_prompts.py::test_storyboard_persona_mentions_sections       PASSED
+tests/test_sandbox_service.py::test_run_includes_prior_turns_in_messages PASSED
+tests/test_sandbox_service.py::test_image_attachment_is_included_in_current_turn PASSED
+tests/test_sandbox_service.py::test_system_prompt_from_config_is_used  PASSED
 ```
 
-**Model-serving tests** (14/14 passed — tests requiring `torch`/GPU skipped locally):
+**Model-serving tests** (24/24 passed):
 ```
+tests/test_api.py::test_health_endpoint_reports_ok                     PASSED
+tests/test_api.py::test_rewrite_job_completes                          PASSED
+tests/test_api.py::test_rewrite_cache_returns_immediate_success        PASSED
+tests/test_benchmark_targets.py::test_benchmark_listing_rewrite_uses_scenario_metadata PASSED
+tests/test_benchmark_targets.py::test_benchmark_listing_rewrite_derives_model_id_from_label PASSED
 tests/test_benchmarking.py::test_run_benchmark_returns_summary          PASSED
 tests/test_benchmarking.py::test_load_scenarios_parses_request_mode     PASSED
 tests/test_benchmarking.py::test_simulate_capacity_returns_e2b_and_e4b  PASSED
-tests/test_planning.py::test_traffic_profile_exposes_concurrency        PASSED
-tests/test_planning.py::test_estimate_concurrent_requests               PASSED
-tests/test_planning.py::test_estimate_worker_throughput                 PASSED
-tests/test_planning.py::test_estimate_required_workers_rounds_up        PASSED
-tests/test_planning.py::test_estimate_cost_per_request                  PASSED
-tests/test_planning.py::test_estimate_concurrent_requests_validates_inputs PASSED (x3)
-tests/test_planning.py::test_estimate_worker_throughput_validates_latency PASSED
-tests/test_planning.py::test_estimate_required_workers_validates_inputs  PASSED
-tests/test_planning.py::test_estimate_cost_per_request_validates_inputs  PASSED
+tests/test_gateway.py::test_rewrite_listing_uses_gemma_json_response    PASSED
+tests/test_gateway.py::test_extract_attributes_limits_images_and_returns_metadata PASSED
+tests/test_gemma_service.py::test_generate_simple_text                  PASSED
+tests/test_gemma_service.py::test_generate_text_matches_gemma_getting_started_flow PASSED
+tests/test_gemma_service.py::test_generate_text_one_shot_skips_streamer PASSED
+tests/test_planning.py (11 tests)                                       PASSED
 ```
 
 ## Quick Start
@@ -272,28 +276,16 @@ cp ui/.env.example ui/.env
 ```
 
 ```powershell
-# Start the model-serving API (terminal 1) — Windows PowerShell
-$env:PYTHONPATH = "C:\path\to\ai-workbench\model-serving\src"
-venv\Scripts\python.exe -m uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000 `
-  --app-dir model-serving\src
-```
-
-```bash
-# Start the model-serving API (terminal 1) — Linux/macOS
-export PYTHONPATH=model-serving/src
-venv/bin/python -m uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+# Start the model-serving API (terminal 1)
+cd model-serving
+.\start_server.ps1
 ```
 
 ```powershell
-# Start the UI (terminal 2) — Windows PowerShell
-$env:PYTHONPATH = "C:\path\to\ai-workbench\ui\src"
-cd ui && .\..\venv\Scripts\streamlit.exe run app.py
-```
-
-```bash
-# Start the UI (terminal 2) — Linux/macOS
-export PYTHONPATH=ui/src
-cd ui && ../venv/bin/streamlit run app.py
+# Start the UI (terminal 2)
+cd ui
+$env:PYTHONPATH = "src"
+streamlit run app.py
 ```
 
 ## Serving Research Toolkit
