@@ -12,7 +12,7 @@ import torch
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-from transformers import AutoProcessor, Gemma4ForConditionalGeneration, TextIteratorStreamer
+from transformers import AutoModelForMultimodalLM, AutoProcessor, TextIteratorStreamer
 
 from gemma_serving.config import ServingConfig, GenerationSettings
 
@@ -370,11 +370,11 @@ class GemmaService:
                     LOGGER.info(f"✅ CUDA Available - Multimodal model will use GPU: {torch.cuda.get_device_name(0)}")
                 
                 dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-                self._emit(progress_callback, "runtime", 0.06, "Checking Gemma runtime state...")
+                self._emit(progress_callback, "runtime", 0.06, "Checking model runtime state...")
                 self._ensure_processor(progress_callback)
                 quant_label = " (4-bit quantized)" if self._config.quantize_4bit else ""
                 device_label = "GPU" if torch.cuda.is_available() else "CPU"
-                self._emit(progress_callback, "model", 0.34, f"Loading Gemma multimodal weights on {device_label}{quant_label}. The first run may download several GB and take a few minutes...")
+                self._emit(progress_callback, "model", 0.34, f"Loading multimodal weights on {device_label}{quant_label}. The first run may download several GB and take a few minutes...")
                 self._multimodal_model = _load_multimodal_model(
                     self._config.model_id, dtype,
                     quantize_4bit=self._config.quantize_4bit,
@@ -403,7 +403,50 @@ class GemmaService:
                 0.16,
                 f"Loading processor for {self._config.model_id}...",
             )
-            self._processor = AutoProcessor.from_pretrained(self._config.model_id)
+            if "mistral" in self._config.model_id.lower():
+                # fix_mistral_regex is a tokenizer-level flag and is not forwarded
+                # by AutoProcessor to its internal tokenizer. Load the tokenizer
+                # explicitly with the flag, then replace the one inside the processor.
+                # See: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84
+                #
+                # fix_mistral_regex=True only applies to LlamaTokenizerFast-backed tokenizers
+                # (older Mistral models using SentencePiece). Newer Mistral models (e.g.
+                # Mistral-Small-3.1 / Mistral-Small-4) use the Tekken tokenizer, which is a
+                # native Rust TokenizersBackend and does not need — or support — this flag.
+                # Passing fix_mistral_regex=True to a TokenizersBackend tokenizer raises:
+                #   AttributeError: 'tokenizers.Tokenizer' has no attribute 'backend_tokenizer'
+                # because the fix modifies internal Python-level attributes that only exist
+                # in the SentencePiece-derived fast tokenizer.
+                #
+                # Strategy: check the tokenizer class declared in the config first; only set
+                # fix_mistral_regex=True for LlamaTokenizerFast-based models.
+                from transformers import AutoTokenizer
+                from transformers import AutoConfig as _AutoCfg
+                _tok_cfg = _AutoCfg.for_model("mistral3")  # not used — we need the repo config
+                _repo_cfg = _AutoCfg.from_pretrained(self._config.model_id)
+                _tok_class = getattr(_repo_cfg, "tokenizer_class", None)
+                # LlamaTokenizerFast uses SentencePiece and needs the regex fix.
+                # MistralTokenizerFast / TokenizersBackend (Tekken) does not.
+                _needs_regex_fix = _tok_class == "LlamaTokenizerFast"
+                if _needs_regex_fix:
+                    LOGGER.info(
+                        "Mistral model with LlamaTokenizerFast detected — "
+                        "loading tokenizer with fix_mistral_regex=True"
+                    )
+                    _tokenizer = AutoTokenizer.from_pretrained(
+                        self._config.model_id, fix_mistral_regex=True
+                    )
+                else:
+                    LOGGER.info(
+                        "Mistral model with %s detected — "
+                        "fix_mistral_regex not applicable, loading tokenizer normally",
+                        _tok_class or "unknown tokenizer class",
+                    )
+                    _tokenizer = AutoTokenizer.from_pretrained(self._config.model_id)
+                self._processor = AutoProcessor.from_pretrained(self._config.model_id)
+                self._processor.tokenizer = _tokenizer
+            else:
+                self._processor = AutoProcessor.from_pretrained(self._config.model_id)
 
     def _emit(
         self,
@@ -434,17 +477,23 @@ def _resolve_model_device(model: Any) -> torch.device:
 
 
 def _load_multimodal_model(model_id: str, dtype: torch.dtype, *, quantize_4bit: bool = False, force_download: bool = False, config: ServingConfig | None = None):
-    LOGGER.info("Loading model with Gemma4ForConditionalGeneration: %s", model_id)
+    # Using AutoModelForMultimodalLM so that Gemma 4, Mistral 3/4, and any other
+    # multimodal model registered in transformers can be loaded by HF model ID
+    # without code changes. Both Gemma4Config and Mistral3/4Config are registered
+    # in transformers 5.5.0. AutoModelForCausalLM must NOT be used — it rejects
+    # image/audio tensor inputs.
+    LOGGER.info("Loading model with AutoModelForMultimodalLM: %s", model_id)
     try:
-        return Gemma4ForConditionalGeneration.from_pretrained(
+        return AutoModelForMultimodalLM.from_pretrained(
             model_id,
             **_build_model_load_kwargs(dtype, quantize_4bit=quantize_4bit, force_download=force_download, config=config),
         )
     except Exception as error:
         raise RuntimeError(
-            f"Failed to load model '{model_id}' as Gemma4ForConditionalGeneration. "
-            f"Ensure GEMMA_MODEL_ID in your .env points to a Gemma 4 checkpoint "
-            f"(e.g. google/gemma-4-E2B-it). Original error: {error}"
+            f"Failed to load model '{model_id}' as AutoModelForMultimodalLM. "
+            f"Ensure the model ID is a supported multimodal checkpoint "
+            f"(e.g. google/gemma-4-E2B-it, mistralai/Mistral-Small-3.1-24B-Instruct-2503). "
+            f"Original error: {error}"
         ) from error
 
 

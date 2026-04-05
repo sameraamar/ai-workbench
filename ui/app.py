@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import sys
+import tempfile
 from time import perf_counter
 
 from env_bootstrap import bootstrap_environment
@@ -16,11 +17,17 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from gemma_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, MODEL_OPTIONS, SERVING_URL
+from gemma_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, SERVING_URL
 from gemma_sandbox.domain import RunResult
 from gemma_sandbox.media import extract_video_frames, persist_upload
-from gemma_sandbox.prompts import PERSONA_PRESETS
+from gemma_sandbox.model_profiles import MODEL_LABELS, get_capabilities, get_model_id
 from gemma_sandbox.services.sandbox_service import SandboxService, TurnAttachment
+
+try:
+    from streamlit_paste_button import paste_image_button as _paste_image_button
+    _PASTE_AVAILABLE = True
+except ImportError:
+    _PASTE_AVAILABLE = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +38,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 st.set_page_config(
-    page_title="Gemma Sandbox Arena",
+    page_title="AI Sandbox Arena",
     page_icon="AI",
     layout="wide",
 )
@@ -173,30 +180,29 @@ def _render_pending_exchange(user_prompt: str, attachment_labels: list[str]) -> 
     return placeholder
 
 
+def _model_family_label(label: str) -> str:
+    """Return a short family name for display from a model dropdown label."""
+    low = label.lower()
+    if "mistral" in low:
+        return "Mistral"
+    if "gemma" in low:
+        return "Gemma 4"
+    return label.split("(")[0].strip()
+
+
 def main() -> None:
     inject_styles()
-    st.markdown('<div class="hero">', unsafe_allow_html=True)
-    st.markdown('<div class="mono-label">Gemma 4 Sandbox</div>', unsafe_allow_html=True)
-    st.title("Gemma Sandbox Arena")
-    st.write(
-        "A multimodal conversation sandbox for Gemma 4. "
-        "Attach images, audio, or video to any message. Responses are always text."
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
 
     with st.sidebar:
-        st.header("Mission Settings")
-        model_labels = [label for label, _model_id in MODEL_OPTIONS]
-        model_id_to_label = {model_id: label for label, model_id in MODEL_OPTIONS}
+        st.header("Settings")
         selected_model_label = st.selectbox(
-            "Gemma model",
-            options=[*model_labels, "Custom model ID"],
-            index=(model_labels.index(model_id_to_label[DEFAULT_MODEL_ID]) if DEFAULT_MODEL_ID in model_id_to_label else len(model_labels)),
+            "Model",
+            options=MODEL_LABELS,
+            index=0,
         )
-        if selected_model_label == "Custom model ID":
-            model_id = st.text_input("Custom model ID", value=DEFAULT_MODEL_ID)
-        else:
-            model_id = dict(MODEL_OPTIONS)[selected_model_label]
+        model_id = get_model_id(selected_model_label, fallback=DEFAULT_MODEL_ID)
+
+        caps = get_capabilities(selected_model_label)
 
         # --- Model load control ---
         _server_model_id = st.session_state.get("_loaded_model_id")
@@ -222,15 +228,18 @@ def main() -> None:
             else:
                 st.info("Not loaded", icon="\u23F3")
 
-        preset_name = st.selectbox("Assistant persona", options=list(PERSONA_PRESETS))
-        preset_text = PERSONA_PRESETS[preset_name]
-        if "_last_persona" not in st.session_state:
-            st.session_state["_last_persona"] = preset_name
+        if caps.vram_gb_bf16 > 0:
+            _vram = caps.vram_gb_bf16
+            if _vram > 24:
+                st.warning(
+                    f"⚠️ **{selected_model_label}** requires ~{_vram:.0f} GB VRAM at BF16. "
+                    f"Enable `GEMMA_QUANTIZE_4BIT=1` in `model-serving/.env` to run on a 24 GB GPU (~{_vram / 4:.0f} GB with 4-bit).",
+                )
+            else:
+                st.caption(f"~{_vram:.0f} GB VRAM at BF16.")
+
         if "_system_prompt_input" not in st.session_state:
-            st.session_state["_system_prompt_input"] = preset_text or DEFAULT_SYSTEM_PROMPT
-        if preset_name != st.session_state["_last_persona"]:
-            st.session_state["_last_persona"] = preset_name
-            st.session_state["_system_prompt_input"] = preset_text
+            st.session_state["_system_prompt_input"] = DEFAULT_SYSTEM_PROMPT
         system_prompt = st.text_area(
             "System prompt",
             height=160,
@@ -242,6 +251,15 @@ def main() -> None:
         st.caption(f"Active model: {model_id}")
         st.caption(f"Serving URL: {SERVING_URL}")
         st.caption("Standardized sampling defaults are locked to temperature=1.0, top_p=0.95, top_k=64.")
+
+    # Hero — dynamic label reflects the currently selected model family
+    _family = _model_family_label(selected_model_label)
+    _media_note = "Attach images" + (", audio," if caps.audio else "") + (" video," if caps.video else "") + " or other media to any message. Responses are always text."
+    st.markdown('<div class="hero">', unsafe_allow_html=True)
+    st.markdown(f'<div class="mono-label">{_family} Sandbox</div>', unsafe_allow_html=True)
+    st.title("AI Sandbox Arena")
+    st.write(_media_note)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     config = AppConfig(
         model_id=model_id,
@@ -269,7 +287,6 @@ def main() -> None:
 
     with left:
         st.markdown('<div class="support-chip">Native</div>', unsafe_allow_html=True)
-        st.write(f"Persona: **{preset_name}**")
 
         active_conversation_key = _conversation_key(
             model_id=model_id,
@@ -291,29 +308,105 @@ def main() -> None:
 
         pending_exchange_slot = st.empty()
 
-        uploaded_file = st.file_uploader(
-            "Attach media (optional)",
-            type=["png", "jpg", "jpeg", "webp", "wav", "mp3", "flac", "ogg", "m4a", "mp4", "mov", "avi", "mkv", "webm"],
-            help="Attach an image, audio file, or video to include with your next message. Video is automatically sampled into representative frames.",
-            key=f"upload_{st.session_state.get('_uploader_key', 0)}",
-        )
+        _generating = st.session_state.get("_generating", False)
+        _input_key = st.session_state.get("_uploader_key", 0)
+
+        # ---- Media attachment tabs ----
+        _upload_types_image = ["png", "jpg", "jpeg", "webp"]
+        _upload_types_audio = ["wav", "mp3", "flac", "ogg", "m4a"]
+        _upload_types_video = ["mp4", "mov", "avi", "mkv", "webm"]
+        _allowed_upload_types = [
+            *_upload_types_image,
+            *(_upload_types_audio if caps.audio else []),
+            *(_upload_types_video if caps.video else []),
+        ]
+
+        uploaded_file = None
+        image_url_input: str = ""
+        pasted_image_data = None
+
+        _media_tab_labels = ["📁 Upload", "🔗 URL", "📋 Paste"]
+        _tab_upload, _tab_url, _tab_paste = st.tabs(_media_tab_labels)
+
+        with _tab_upload:
+            _upload_help_parts = ["image"]
+            if caps.audio:
+                _upload_help_parts.append("audio")
+            if caps.video:
+                _upload_help_parts.append("video (auto-sampled into frames)")
+            uploaded_file = st.file_uploader(
+                "Attach media (optional)",
+                type=_allowed_upload_types,
+                help=f"Supported for this model: {', '.join(_upload_help_parts)}.",
+                disabled=_generating,
+                key=f"upload_{_input_key}",
+            )
+
+        with _tab_url:
+            if caps.image:
+                image_url_input = st.text_input(
+                    "Image URL",
+                    placeholder="https://example.com/image.jpg",
+                    help="Paste a public https:// image URL. The model processor fetches it directly.",
+                    disabled=_generating,
+                    key=f"url_input_{_input_key}",
+                )
+            else:
+                st.caption("This model does not support image input.")
+
+        with _tab_paste:
+            if _PASTE_AVAILABLE:
+                _paste_result = _paste_image_button("📋 Paste image from clipboard")
+                if _paste_result is not None and getattr(_paste_result, "image_data", None) is not None:
+                    pasted_image_data = _paste_result.image_data
+                    st.image(pasted_image_data, caption="Pasted image", width=200)
+            else:
+                st.info(
+                    "Clipboard paste requires the `streamlit-paste-button` package. "
+                    "Install it with: `pip install streamlit-paste-button`",
+                    icon="ℹ️",
+                )
 
         user_prompt = st.chat_input(
-            "Type your message and press Enter to run.",
-            disabled=not _model_ready,
+            "Generating response, please wait..." if _generating else "Type your message and press Enter to run.",
+            disabled=not _model_ready or _generating,
         ) or ""
-        run_clicked = bool(user_prompt.strip())
+
+        # --- Phase 1: on fresh submission, capture everything and trigger generation rerun ---
+        if user_prompt.strip() and _model_ready and not _generating:
+            _pending: dict = {
+                "prompt": user_prompt,
+                "uploaded_path": None,
+                "uploaded_name": None,
+                "image_urls": list(filter(None, [image_url_input.strip()])),
+                "pasted_image_path": None,
+            }
+            if uploaded_file is not None:
+                _pending["uploaded_path"] = str(persist_upload(uploaded_file))
+                _pending["uploaded_name"] = uploaded_file.name
+            if pasted_image_data is not None:
+                from PIL import Image as _PIL_Image
+                _paste_tmp = Path(tempfile.mktemp(suffix=".png"))
+                _img = pasted_image_data if isinstance(pasted_image_data, _PIL_Image.Image) else _PIL_Image.fromarray(pasted_image_data)
+                _img.save(_paste_tmp)
+                _pending["pasted_image_path"] = str(_paste_tmp)
+            st.session_state["_pending_turn"] = _pending
+            st.session_state["_generating"] = True
+            st.session_state["_uploader_key"] = _input_key + 1
+            st.rerun()
+
+        # --- Phase 2: generation rerun — run_clicked uses stored pending ---
+        run_clicked = _generating and bool(st.session_state.get("_pending_turn", {}).get("prompt", "").strip())
 
         if not _model_ready:
             st.caption("Load a model from the sidebar before running.")
 
+
     with right:
-        st.subheader("Personas")
-        for name, text in PERSONA_PRESETS.items():
-            active = " ◀" if name == preset_name else ""
-            st.markdown(f"**{name}**{active}")
-            if text:
-                st.caption(text[:120] + ("…" if len(text) > 120 else ""))
+        st.subheader("Model Capabilities")
+        st.markdown(f"**{selected_model_label}**")
+        for _cap_label, _supported in [("🖼️ Images", caps.image), ("🔊 Audio", caps.audio), ("🎬 Video", caps.video)]:
+            st.markdown(f"{'✅' if _supported else '❌'} {_cap_label}")
         if _model_ready:
             st.success(f"Runtime status: {model_id} loaded and ready.")
         elif model_loaded:
@@ -329,10 +422,15 @@ def main() -> None:
     if not run_clicked:
         return
 
-    uploaded_path: Path | None = None
-    frame_paths: list[Path] = []
+    # Phase 2: all input data comes from session state — inputs are already cleared
+    pending = st.session_state["_pending_turn"]
+    user_prompt = pending["prompt"]
     attachment_labels: list[str] = []
     attachment = TurnAttachment()
+    frame_paths: list[Path] = []
+    _pending_uploaded_path = Path(pending["uploaded_path"]) if pending.get("uploaded_path") else None
+    _pending_uploaded_name: str | None = pending.get("uploaded_name")
+
     run_status = st.status("Queued sandbox run.", expanded=True)
     run_progress = st.progress(0, text="Waiting to start...")
 
@@ -342,21 +440,29 @@ def main() -> None:
         run_progress.progress(min(max(progress_value, 0.0), 1.0), text=message)
 
     emit_progress("start", 0.02, "Preparing request...")
-    if uploaded_file is not None:
-        uploaded_path = persist_upload(uploaded_file)
-        ext = Path(uploaded_file.name).suffix.lower()
-        label = uploaded_file.name
+    if _pending_uploaded_path is not None and _pending_uploaded_name is not None:
+        ext = Path(_pending_uploaded_name).suffix.lower()
+        label = _pending_uploaded_name
         if ext in _IMAGE_EXTS:
-            attachment.image_paths.append(uploaded_path)
+            attachment.image_paths.append(_pending_uploaded_path)
             attachment_labels.append(f"image: {label}")
         elif ext in _AUDIO_EXTS:
-            attachment.audio_path = uploaded_path
+            attachment.audio_path = _pending_uploaded_path
             attachment_labels.append(f"audio: {label}")
         elif ext in _VIDEO_EXTS:
             emit_progress("video", 0.10, "Extracting representative video frames...")
-            frame_paths = extract_video_frames(uploaded_path)
+            frame_paths = extract_video_frames(_pending_uploaded_path)
             attachment.video_frame_paths = frame_paths
             attachment_labels.append(f"video: {label} ({len(frame_paths)} frames)")
+
+    for _url in pending.get("image_urls", []):
+        attachment.image_urls.append(_url)
+        attachment_labels.append(f"image URL: {_url}")
+
+    if pending.get("pasted_image_path"):
+        attachment.image_paths.append(Path(pending["pasted_image_path"]))
+        attachment_labels.append("image: pasted from clipboard")
+
 
     pending_exchange_slot.empty()
     with pending_exchange_slot.container():
@@ -393,6 +499,8 @@ def main() -> None:
         user_content: list[dict] = []
         for path in attachment.image_paths:
             user_content.append({"type": "image", "url": path.as_posix()})
+        for url in attachment.image_urls:
+            user_content.append({"type": "image", "url": url})
         if attachment.audio_path is not None:
             user_content.append({"type": "audio", "audio": attachment.audio_path.as_posix()})
         for path in attachment.video_frame_paths:
@@ -402,7 +510,8 @@ def main() -> None:
         model_history.append({"role": "assistant", "content": [{"type": "text", "text": result.response_text}]})
         ui_history.append({"role": "user", "text": user_prompt, "attachment_labels": attachment_labels})
         ui_history.append({"role": "assistant", "text": result.response_text})
-        st.session_state["_uploader_key"] = st.session_state.get("_uploader_key", 0) + 1
+        st.session_state["_generating"] = False
+        st.session_state.pop("_pending_turn", None)
         st.rerun()
 
         st.subheader("Result")
@@ -478,7 +587,6 @@ def main() -> None:
                     "generation_output_tokens_per_second": generation_tokens_per_second,
                     "memory": memory,
                     "support_level": result.support_level,
-                    "persona": preset_name,
                     "system_prompt": system_prompt,
                     "conversation_turn_count": len(ui_history) // 2,
                     "enable_thinking": enable_thinking,
@@ -487,7 +595,7 @@ def main() -> None:
                     "temperature": config.generation.temperature,
                     "top_p": config.generation.top_p,
                     "top_k": config.generation.top_k,
-                    "uploaded_file": uploaded_file.name if uploaded_file is not None else None,
+                    "uploaded_file": _pending_uploaded_name,
                     "sampled_frame_count": len(frame_paths),
                 }
             )
@@ -503,6 +611,9 @@ def main() -> None:
         run_status.update(label="Sandbox run failed.", state="error", expanded=True)
         live_response_placeholder.empty()
         st.error(str(error))
+        st.session_state["_generating"] = False
+        st.session_state.pop("_pending_turn", None)
+        st.rerun()
 
 
 if __name__ == "__main__":

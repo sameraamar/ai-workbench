@@ -20,15 +20,29 @@ class TurnAttachment:
     Any combination of images, one audio file, and video frames is valid.
     Media parts are appended to the content list before the text part so
     the model processor sees them in a predictable order.
+
+    URL-based media (``image_urls``, ``audio_url``, ``video_url``) is mixed
+    in alongside path-based media. HuggingFace processors accept https://
+    URLs directly for images; audio/video URLs are expected to already be
+    resolved to a local path by the caller before setting ``audio_path`` or
+    ``video_frame_paths``.
     """
 
     image_paths: list[Path] = field(default_factory=list)
     audio_path: Path | None = None
     video_frame_paths: list[Path] = field(default_factory=list)
+    # URL-based inputs — image URLs are passed straight to the processor;
+    # audio/video URL download to tmp is handled by the UI layer.
+    image_urls: list[str] = field(default_factory=list)
 
     @property
     def has_media(self) -> bool:
-        return bool(self.image_paths or self.audio_path or self.video_frame_paths)
+        return bool(
+            self.image_paths
+            or self.audio_path
+            or self.video_frame_paths
+            or self.image_urls
+        )
 
 
 class SandboxService:
@@ -65,6 +79,8 @@ class SandboxService:
         current_content: list[dict] = []
         for path in attachment.image_paths:
             current_content.append({"type": "image", "url": path.as_posix()})
+        for url in attachment.image_urls:
+            current_content.append({"type": "image", "url": url})
         if attachment.audio_path is not None:
             current_content.append({"type": "audio", "audio": attachment.audio_path.as_posix()})
         for path in attachment.video_frame_paths:
