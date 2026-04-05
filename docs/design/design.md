@@ -41,7 +41,7 @@ The three-project architecture is intentionally model-agnostic at the API bounda
 - The serving layer could host multiple models behind the same endpoint, selected by a request field.
 - The UI's ability modes, prompt presets, and conversation state are model-independent.
 
-This is a design intent, not a current requirement. No multi-model code exists yet. When a second model is added, the serving config and loader will need generalization, but the API contract and UI should remain stable.
+This is a design intent, not a current requirement. No multi-model code exists yet. When a second model is added, the loader in `gemma_service.py` should switch from `Gemma4ForConditionalGeneration` (explicit, Gemma-only) to `AutoModelForMultimodalLM` (registered for Gemma 3/4, Mistral 3/4, Llama 4, and 70+ other multimodal architectures in transformers 5.5.0). `AutoModelForCausalLM` is **not** suitable because it is text-only and does not accept image or audio tensors. The API contract and UI should remain stable across this change.
 
 ## Sandbox Concept
 

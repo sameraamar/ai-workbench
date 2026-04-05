@@ -11,13 +11,6 @@ DEFAULT_SYSTEM_PROMPT = os.getenv(
 )
 SERVING_URL = os.getenv("GEMMA_SERVING_URL", "http://localhost:8000")
 
-MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("Gemma 4 E2B IT", "google/gemma-4-E2B-it"),
-    ("Gemma 4 E4B IT", "google/gemma-4-E4B-it"),
-    ("Gemma 4 26B A4B IT", "google/gemma-4-26B-A4B-it"),
-    ("Gemma 4 31B IT", "google/gemma-4-31B-it"),
-)
-
 
 @dataclass
 class GenerationSettings:

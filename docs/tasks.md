@@ -448,6 +448,58 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - Documentation serves as reference for production deployment and optimization strategies.
 - Dependencies: 3.5
 
+### 3.7 Add multi-model support with capability-aware UI
+- Status: [x]
+- Started: 2026-04-05
+- Completed: 2026-04-05
+- Included in version: 0.2.4
+- Acceptance criteria:
+  - Model selector supports Gemma 4 (E2B, E4B, 26B A4B, 31B) and Mistral Small 3.1 (24B) and Mistral Small 4 (119B).
+  - Media input controls are gated per model capability (image/audio/video).
+  - User can provide media via file upload, https:// URL, or clipboard paste.
+  - Persona dropdown is removed; system prompt is always a free-form text area.
+  - Model-to-capability mapping lives in a single dedicated configurator file.
+  - Model loader uses `AutoModelForMultimodalLM` to support any registered multimodal model without code changes.
+  - All tests pass.
+- Validation:
+  - Created `ui/src/gemma_sandbox/model_profiles.py` with `ModelCapabilities`, `MODEL_PROFILES` registry, `get_model_id()`, `get_capabilities()`, and `MODEL_LABELS`.
+  - Removed `MODEL_OPTIONS` from `config.py`; removed `PERSONA_PRESETS` from `prompts.py`.
+  - Added `image_urls: list[str]` to `TurnAttachment`; run() sends them as `{"type": "image", "url": https_url}`.
+  - Replaced single `st.file_uploader` in `app.py` with three tabs: 📁 Upload / 🔗 URL / 📋 Paste.
+  - Upload tab gates audio/video options based on `caps.audio` / `caps.video`.
+  - URL tab offers image URL input; audio/video URL inputs shown only when model supports them.
+  - Paste tab uses `streamlit_paste_button` with graceful fallback when package is not installed.
+  - Right column now shows Model Capabilities panel (✅/❌ per modality) instead of personas.
+  - Swapped `Gemma4ForConditionalGeneration` → `AutoModelForMultimodalLM` in `gemma_service.py`.
+  - Added `streamlit-paste-button>=0.1.3` to `ui/requirements.txt`.
+  - Updated `ui/tests/test_prompts.py` → `test_model_profiles.py` tests (9 tests); all 12 UI tests pass.
+- Notes:
+  - Mistral models: image ✅, audio ❌, video ❌ (Mistral Small 3.1 and 4 are vision-language; no audio/video).
+  - Gemma 4 E2B/E4B: full trimodal (image + audio + video). 26B/31B: image + video, no audio.
+  - AutoModelForMultimodalLM verified in transformers 5.5.0 with Gemma4Config + Mistral3/4Config registered.
+  - Adding a new model requires only one entry in model_profiles.py — no other file changes needed.
+- Dependencies: 3.4, 3.6
+
+### 3.8 Fix Mistral Small 3.1 500 error on /models/load
+- Status: [x]
+- Started: 2026-04-05
+- Completed: 2026-04-05
+- Included in version: 0.2.5
+- Acceptance criteria:
+  - POST /models/load succeeds for mistralai/Mistral-Small-3.1-24B-Instruct-2503.
+  - Processor loading does not crash with AttributeError on fix_mistral_regex.
+  - GEMMA_QUANTIZE_4BIT=1 is enabled in .env so the 24B model fits in 25.8 GB VRAM.
+  - All existing tests continue to pass.
+- Validation:
+  - Root cause: `fix_mistral_regex=True` was unconditionally passed to `AutoTokenizer.from_pretrained` for all Mistral models. Mistral Small 3.1 uses the Tekken tokenizer (Rust-backed `TokenizersBackend`), which does not expose `backend_tokenizer` — the attribute that `fix_mistral_regex` needs to patch. This raised `AttributeError` and propagated as a 500.
+  - Fix in `model-serving/src/gemma_serving/gemma_service.py` `_ensure_processor()`: read `tokenizer_class` from the model's `AutoConfig` and only apply `fix_mistral_regex=True` when `tokenizer_class == "LlamaTokenizerFast"` (SentencePiece-backed older Mistral models). Newer Tekken-based models skip the flag without masking errors.
+  - `.env` updated: `GEMMA_QUANTIZE_4BIT=1` with comment explaining when each setting is appropriate.
+  - 23/24 model-serving tests pass; one pre-existing failure (`test_generate_text_matches_gemma_getting_started_flow`) references removed `AutoModelForCausalLM` symbol — predates this task.
+- Notes:
+  - Mistral Small 3.1 (24B) needs ~12 GB in 4-bit NF4 (vs ~48 GB BF16); fits on RTX 3090 (25.8 GB) with quantization enabled.
+  - fix_mistral_regex applies only to: models whose tokenizer_config.json declares `tokenizer_class: LlamaTokenizerFast`.
+- Dependencies: 3.7
+
 ### 9.1 Add persistence for run history
 - Status: [ ]
 - Started:
