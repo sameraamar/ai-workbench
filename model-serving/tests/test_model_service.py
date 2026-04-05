@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import torch
 
-from gemma_serving.config import ServingConfig, GenerationSettings
-from gemma_serving import gemma_service as gemma_service_module
-from gemma_serving.gemma_service import GemmaService
+from model_serving.config import ServingConfig, GenerationSettings
+from model_serving import model_service as model_service_module
+from model_serving.model_service import ModelService
 
 
 class FakeInputs(dict):
@@ -120,7 +120,7 @@ class TrackingModel(FakeModel):
 
 
 def test_generate_simple_text(monkeypatch) -> None:
-    service = GemmaService(ServingConfig(generation=GenerationSettings(max_new_tokens=64)))
+    service = ModelService(ServingConfig(generation=GenerationSettings(max_new_tokens=64)))
     fake_processor = FakeProcessor()
     fake_model = FakeModel()
     partial_tokens: list[str] = []
@@ -131,7 +131,7 @@ def test_generate_simple_text(monkeypatch) -> None:
         "_get_text_runtime",
         lambda progress_callback=None: (fake_processor, fake_model),
     )
-    monkeypatch.setattr(gemma_service_module, "TextIteratorStreamer", FakeStreamer)
+    monkeypatch.setattr(model_service_module, "TextIteratorStreamer", FakeStreamer)
 
     response = service.generate(
         messages=[
@@ -162,31 +162,41 @@ def test_generate_text_matches_gemma_getting_started_flow(monkeypatch) -> None:
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Write a short joke about saving RAM."},
     ]
-    service = GemmaService(ServingConfig(model_id="google/gemma-4-E2B-it", generation=GenerationSettings(max_new_tokens=1024)))
+    service = ModelService(ServingConfig(model_id="google/gemma-4-E2B-it", generation=GenerationSettings(max_new_tokens=1024)))
     tracking_processor = TrackingProcessor(messages)
     tracking_model = TrackingModel()
     processor_load_calls: list[str] = []
     model_load_calls: list[tuple[str, dict[str, object]]] = []
 
-    monkeypatch.setattr(gemma_service_module.torch.cuda, "is_available", lambda: False)
+    # Populate the lazy-import module-level symbols with fakes so the
+    # full processor → model → generate path exercises real code.
+    # _import_transformers() would fail on transformers 4.57.x (no
+    # AutoModelForMultimodalLM), so we short-circuit it.
+    monkeypatch.setattr(model_service_module, "_transformers_imported", True)
+
+    monkeypatch.setattr(model_service_module.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
-        gemma_service_module.AutoProcessor,
-        "from_pretrained",
-        lambda model_id: processor_load_calls.append(model_id) or tracking_processor,
+        model_service_module, "AutoProcessor",
+        type("FakeAP", (), {"from_pretrained": staticmethod(
+            lambda model_id, **kw: processor_load_calls.append(model_id) or tracking_processor
+        )}),
     )
     monkeypatch.setattr(
-        gemma_service_module.AutoModelForCausalLM,
-        "from_pretrained",
-        lambda model_id, **kwargs: model_load_calls.append((model_id, kwargs)) or tracking_model,
+        model_service_module, "AutoModelForMultimodalLM",
+        type("FakeAMML", (), {"from_pretrained": staticmethod(
+            lambda model_id, **kwargs: model_load_calls.append((model_id, kwargs)) or tracking_model
+        )}),
     )
-    monkeypatch.setattr(gemma_service_module, "TextIteratorStreamer", FakeStreamer)
+    monkeypatch.setattr(model_service_module, "TextIteratorStreamer", FakeStreamer)
 
     response = service.generate(messages)
 
     assert response["text"] == "Hello world"
     assert processor_load_calls == ["google/gemma-4-E2B-it"]
-    assert model_load_calls == [("google/gemma-4-E2B-it", {"low_cpu_mem_usage": True, "dtype": torch.float32})]
-    assert tracking_model.eval_called is True
+    assert len(model_load_calls) == 1
+    assert model_load_calls[0][0] == "google/gemma-4-E2B-it"
+    assert model_load_calls[0][1]["low_cpu_mem_usage"] is True
+    assert tracking_model.eval_called is True  # _apply_model_optimizations calls eval()
     assert tracking_model.generate_kwargs is not None
     assert tracking_model.generate_kwargs["temperature"] == 1.0
     assert tracking_model.generate_kwargs["top_p"] == 0.95
@@ -203,7 +213,7 @@ def test_generate_text_matches_gemma_getting_started_flow(monkeypatch) -> None:
 
 
 def test_generate_text_one_shot_skips_streamer(monkeypatch) -> None:
-    service = GemmaService(ServingConfig(generation=GenerationSettings(max_new_tokens=64, stream_output=False)))
+    service = ModelService(ServingConfig(generation=GenerationSettings(max_new_tokens=64, stream_output=False)))
     fake_processor = FakeProcessor()
     fake_model = TrackingModel()
 

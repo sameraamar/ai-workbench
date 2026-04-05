@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from gemma_serving.benchmarking import BenchmarkScenario, load_scenarios, run_benchmark
-from gemma_serving.domain import RequestMode
-from gemma_serving.simulation import simulate_capacity
+from model_serving.planning.benchmarking import BenchmarkScenario, load_scenarios, run_benchmark
+from model_serving.domain import RequestMode
+from model_serving.planning.simulation import simulate_capacity
 
 
 def test_run_benchmark_returns_summary() -> None:

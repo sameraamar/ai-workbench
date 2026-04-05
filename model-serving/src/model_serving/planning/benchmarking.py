@@ -8,7 +8,7 @@ import statistics
 import time
 from typing import Any, Callable
 
-from .domain import RequestMode
+from ..domain import RequestMode
 
 BenchmarkTarget = Callable[["BenchmarkScenario"], Any]
 Clock = Callable[[], float]

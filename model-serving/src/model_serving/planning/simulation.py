@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from .domain import RequestMode
+from ..domain import RequestMode
 from .planning import (
     estimate_concurrent_requests,
     estimate_cost_per_request,

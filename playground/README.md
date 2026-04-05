@@ -4,6 +4,31 @@ Standalone experiments and tools that aren't part of either deployable project.
 
 ## Scripts
 
+### vLLM experiments (WSL2 / Linux)
+
+- **vllm_gemma4.py** — Tests Gemma 4 via vLLM in both client mode (talks to a running server) and offline mode (loads model in-process). Covers text, multimodal, and streaming.
+- **vllm_mistral.py** — Tests Mistral Small 3.1 24B via vLLM. RTX 3090 path uses the AWQ 4-bit quant (~14 GB VRAM). Full-precision path documented for multi-GPU setups.
+
+Quick start (inside WSL2):
+```bash
+pip install vllm --upgrade
+
+# Gemma 4 E2B (fits on RTX 3090 at bf16)
+vllm serve google/gemma-4-e2b-it --host 0.0.0.0 --port 8000 --max-model-len 8192
+
+# Mistral Small 3.1 24B — AWQ 4-bit (fits on RTX 3090)
+vllm serve solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ \
+  --quantization awq --host 0.0.0.0 --port 8000
+```
+
+Then from Windows or WSL2:
+```bash
+python playground/vllm_gemma4.py
+python playground/vllm_mistral.py
+```
+
+### Transformers / legacy
+
 - **gemma4_text_demo.py** — Direct Hugging Face Gemma 4 text inference demo. No project dependencies. Run with any venv that has `torch` and `transformers`.
 - **benchmark_runner.py** — CLI harness for running benchmark scenarios against the model-serving API.
 - **concurrency_simulation.py** — E2B vs E4B serving capacity simulation.
@@ -76,4 +101,7 @@ These scripts use whichever Python environment is active. Install dependencies w
 pip install -r playground/requirements.txt
 ```
 
-They also depend on `torch` and `transformers` (for model inference demos) and optionally the `gemma_serving` package from `model-serving/`.
+- The **Transformers demos** need `torch` and `transformers`.
+- The **vLLM scripts** need `vllm` (Linux/WSL2 only) and `requests`.
+- The **load testing scripts** need `aiohttp`.
+- The legacy scripts optionally depend on the `gemma_serving` package from `model-serving/`.

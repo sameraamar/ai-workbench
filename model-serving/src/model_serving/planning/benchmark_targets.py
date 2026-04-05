@@ -4,11 +4,11 @@ from functools import lru_cache
 import logging
 from typing import Any
 
-from gemma_serving.config import ServingConfig, GenerationSettings
+from model_serving.config import ServingConfig, GenerationSettings
 
 from .benchmarking import BenchmarkScenario
-from .gateway import GemmaLowCostGateway
-from .app import ListingRewriteRequest
+from ..gateway import ModelGateway
+from ..app import ListingRewriteRequest
 
 
 LOGGER = logging.getLogger(__name__)
@@ -49,9 +49,9 @@ def _get_gateway(
     model_id: str,
     max_new_tokens: int,
     enable_thinking: bool,
-) -> GemmaLowCostGateway:
+) -> ModelGateway:
     LOGGER.info(
-        "Creating Gemma benchmark gateway for %s (max_new_tokens=%s, thinking=%s)",
+        "Creating benchmark gateway for %s (max_new_tokens=%s, thinking=%s)",
         model_id,
         max_new_tokens,
         enable_thinking,
@@ -63,10 +63,13 @@ def _get_gateway(
             enable_thinking=enable_thinking,
         ),
     )
-    return GemmaLowCostGateway(config=config)
+    return ModelGateway(config=config)
 
 
 def _model_id_from_label(model_label: str) -> str:
+    # If it looks like a HuggingFace model ID, use it directly
+    if "/" in model_label:
+        return model_label.strip()
     normalized = model_label.strip().lower()
     if "e4b" in normalized:
         return "google/gemma-4-E4B-it"

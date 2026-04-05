@@ -1,18 +1,20 @@
 from .config import GenerationSettings, ServingConfig
 from .domain import RequestMode, TrafficProfile
 from .planning import (
+    MODEL_PROFILES,
     estimate_concurrent_requests,
     estimate_cost_per_request,
     estimate_required_workers,
     estimate_worker_throughput,
+    simulate_capacity,
 )
-from .simulation import MODEL_PROFILES, simulate_capacity
 
 __all__ = [
     "GenerationSettings",
-    "GemmaLowCostGateway",
+    "GemmaLowCostGateway",  # backward-compat alias
     "LowCostServingConfig",
     "MODEL_PROFILES",
+    "ModelGateway",
     "RequestMode",
     "ServingConfig",
     "StubLowCostGateway",
@@ -27,10 +29,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name == "GemmaLowCostGateway":
-        from .gateway import GemmaLowCostGateway
+    if name in ("GemmaLowCostGateway", "ModelGateway"):
+        from .gateway import ModelGateway
 
-        return GemmaLowCostGateway
+        return ModelGateway
     if name in {"LowCostServingConfig", "StubLowCostGateway", "create_low_cost_app"}:
         from .app import LowCostServingConfig, StubLowCostGateway, create_low_cost_app
 

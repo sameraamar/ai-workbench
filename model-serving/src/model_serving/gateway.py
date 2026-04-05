@@ -5,27 +5,40 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from gemma_serving.config import ServingConfig
-from gemma_serving.gemma_service import GemmaService
+from model_serving.config import ServingConfig
+
+# Lazy import to avoid triggering heavy transformers imports at app startup.
+# ModelService is only needed when the real gateway is used (not the stub).
+if TYPE_CHECKING:
+    from model_serving.model_service import ModelService
 
 if TYPE_CHECKING:
-    from gemma_serving.app import AttributeExtractionRequest, ListingRewriteRequest
+    from model_serving.app import AttributeExtractionRequest, ListingRewriteRequest
 
 LOGGER = logging.getLogger(__name__)
 
 
-class GemmaLowCostGateway:
+class ModelGateway:
+    """Model-agnostic gateway for marketplace operations."""
+
     def __init__(
         self,
         config: ServingConfig | None = None,
-        gemma_service: GemmaService | None = None,
+        model_service: ModelService | None = None,
+        # Backward-compat kwarg
+        gemma_service: ModelService | None = None,
     ) -> None:
         self._config = config or ServingConfig()
-        self._gemma = gemma_service or GemmaService(self._config)
+        svc = model_service or gemma_service
+        if svc is not None:
+            self._model = svc
+        else:
+            from model_serving.model_service import ModelService as _MS
+            self._model = _MS(self._config)
 
     def rewrite_listing(self, request: ListingRewriteRequest) -> dict[str, Any]:
         prompt = _build_rewrite_prompt(request)
-        response = self._gemma.generate(
+        response = self._model.generate(
             [
                 {
                     "role": "system",
@@ -51,7 +64,7 @@ class GemmaLowCostGateway:
     def extract_attributes(self, request: AttributeExtractionRequest) -> dict[str, Any]:
         inspected_images = request.image_urls[: request.max_images]
         prompt = _build_attribute_prompt(request, inspected_images)
-        response = self._gemma.generate(
+        response = self._model.generate(
             [
                 {
                     "role": "system",
@@ -80,10 +93,17 @@ class GemmaLowCostGateway:
         }
 
 
-def build_gateway_from_env() -> GemmaLowCostGateway | None:
-    gateway_mode = os.getenv("GEMMA_FASTAPI_GATEWAY", "stub").strip().lower()
-    if gateway_mode == "gemma":
-        return GemmaLowCostGateway()
+# Backward-compat alias
+GemmaLowCostGateway = ModelGateway
+
+
+def build_gateway_from_env() -> ModelGateway | None:
+    gateway_mode = (
+        os.getenv("MODEL_GATEWAY")
+        or os.getenv("GEMMA_FASTAPI_GATEWAY", "stub")
+    ).strip().lower()
+    if gateway_mode in ("gemma", "model", "real"):
+        return ModelGateway()
     return None
 
 

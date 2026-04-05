@@ -20,8 +20,9 @@ if str(SRC_DIR) not in sys.path:
 from gemma_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, SERVING_URL
 from gemma_sandbox.domain import RunResult
 from gemma_sandbox.media import extract_video_frames, persist_upload
-from gemma_sandbox.model_profiles import MODEL_LABELS, get_capabilities, get_model_id
+from gemma_sandbox.model_profiles import MODEL_LABELS, get_capabilities, get_label_for_model_id, get_model_id, model_labels_for_backend
 from gemma_sandbox.services.sandbox_service import SandboxService, TurnAttachment
+from gemma_sandbox.services.serving_client import ServingClient
 
 try:
     from streamlit_paste_button import paste_image_button as _paste_image_button
@@ -193,50 +194,54 @@ def _model_family_label(label: str) -> str:
 def main() -> None:
     inject_styles()
 
+    # --- Early backend probe (before sidebar) ---
+    # Detect which model the server is actually serving so the dropdown
+    # auto-selects it.  vLLM loads ONE model at startup; the dropdown is
+    # informational only.  Windows backend can switch models on demand.
+    _probe = ServingClient(base_url=SERVING_URL)
+    _server_healthy = _probe.is_healthy()
+    _backend_mode = _probe.detect_backend_mode() if _server_healthy else "vllm"
+    _active_model: str | None = _probe.get_active_model_id() if _server_healthy else None
+    _active_label: str | None = get_label_for_model_id(_active_model) if _active_model else None
+    _is_native_backend = _backend_mode == "native"
+    _dropdown_labels = model_labels_for_backend(_backend_mode)
+
+    # Choose the dropdown default: server's model if known, else first entry.
+    if _active_label and _active_label in _dropdown_labels:
+        _default_index = _dropdown_labels.index(_active_label)
+    else:
+        _default_index = 0
+
     with st.sidebar:
         st.header("Settings")
         selected_model_label = st.selectbox(
             "Model",
-            options=MODEL_LABELS,
-            index=0,
+            options=_dropdown_labels,
+            index=_default_index,
+            help="Native backend: switches model on demand. vLLM: fixed at server startup." if _server_healthy else None,
         )
         model_id = get_model_id(selected_model_label, fallback=DEFAULT_MODEL_ID)
 
+        # --- Windows backend: allow model switching ---
+        if _is_native_backend and _active_model and model_id != _active_model:
+            if st.button("🔄 Load selected model", use_container_width=True):
+                with st.spinner(f"Loading {selected_model_label}..."):
+                    try:
+                        _probe.load_model(model_id)
+                        st.success(f"Loaded {selected_model_label}")
+                        # Refresh probe state after load
+                        _active_model = _probe.get_active_model_id()
+                        _active_label = get_label_for_model_id(_active_model) if _active_model else None
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to load model: {e}")
+
         caps = get_capabilities(selected_model_label)
 
-        # --- Model load control ---
-        _server_model_id = st.session_state.get("_loaded_model_id")
-        _model_ready = st.session_state.get("_model_ready", False)
-        model_changed = model_id != _server_model_id
-        if model_changed:
-            _model_ready = False
-            st.session_state["_model_ready"] = False
-
-        load_col, status_col = st.columns([0.5, 0.5])
-        with load_col:
-            load_clicked = st.button(
-                "Load Model",
-                type="primary",
-                use_container_width=True,
-                disabled=_model_ready and not model_changed,
-            )
-        with status_col:
-            if _model_ready and not model_changed:
-                st.success("Ready", icon="\u2705")
-            elif _server_model_id and model_changed:
-                st.warning("Changed", icon="\u26A0\uFE0F")
-            else:
-                st.info("Not loaded", icon="\u23F3")
+        _sidebar_status_slot = st.empty()
 
         if caps.vram_gb_bf16 > 0:
-            _vram = caps.vram_gb_bf16
-            if _vram > 24:
-                st.warning(
-                    f"⚠️ **{selected_model_label}** requires ~{_vram:.0f} GB VRAM at BF16. "
-                    f"Enable `GEMMA_QUANTIZE_4BIT=1` in `model-serving/.env` to run on a 24 GB GPU (~{_vram / 4:.0f} GB with 4-bit).",
-                )
-            else:
-                st.caption(f"~{_vram:.0f} GB VRAM at BF16.")
+            st.caption(f"~{caps.vram_gb_bf16:.0f} GB VRAM at BF16 (managed by backend).")
 
         if "_system_prompt_input" not in st.session_state:
             st.session_state["_system_prompt_input"] = DEFAULT_SYSTEM_PROMPT
@@ -245,16 +250,27 @@ def main() -> None:
             height=160,
             key="_system_prompt_input",
         )
+        _apply_col_spacer, _apply_col_btn = st.columns([0.7, 0.3])
+        with _apply_col_btn:
+            st.button("Apply", key="_apply_system_prompt", help="Apply system prompt changes (or press Ctrl+Enter)", type="secondary", use_container_width=True)
         max_new_tokens = st.slider("Max new tokens", min_value=64, max_value=2048, value=256, step=64)
         enable_thinking = st.toggle("Enable thinking", value=False)
         stream_output = st.checkbox("Stream text response to UI", value=True)
-        st.caption(f"Active model: {model_id}")
-        st.caption(f"Serving URL: {SERVING_URL}")
+        st.caption(f"Active model: {_active_model or model_id}")
+        st.caption(f"Backend: {'Native (Transformers)' if _is_native_backend else 'vLLM'} · {SERVING_URL}")
         st.caption("Standardized sampling defaults are locked to temperature=1.0, top_p=0.95, top_k=64.")
 
-    # Hero — dynamic label reflects the currently selected model family
-    _family = _model_family_label(selected_model_label)
-    _media_note = "Attach images" + (", audio," if caps.audio else "") + (" video," if caps.video else "") + " or other media to any message. Responses are always text."
+    # Use the effective model: on Windows backend the user picks freely;
+    # on vLLM the server's model overrides the dropdown.
+    if _is_native_backend:
+        _effective_model_id = model_id
+        _effective_label = selected_model_label
+    else:
+        _effective_model_id = _active_model or model_id
+        _effective_label = (_active_label or selected_model_label) if _active_label else selected_model_label
+    _effective_caps = get_capabilities(_effective_label)
+    _family = _model_family_label(_effective_label)
+    _media_note = "Attach images" + (", audio," if _effective_caps.audio else "") + (" video," if _effective_caps.video else "") + " or other media to any message. Responses are always text."
     st.markdown('<div class="hero">', unsafe_allow_html=True)
     st.markdown(f'<div class="mono-label">{_family} Sandbox</div>', unsafe_allow_html=True)
     st.title("AI Sandbox Arena")
@@ -262,26 +278,30 @@ def main() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
     config = AppConfig(
-        model_id=model_id,
+        model_id=_effective_model_id,
         system_prompt=system_prompt,
         generation=GenerationSettings(max_new_tokens=max_new_tokens, enable_thinking=enable_thinking, stream_output=stream_output),
     )
     sandbox = get_sandbox_service(config)
-    model_loaded = sandbox.is_model_loaded()
 
-    # --- Handle Load Model button ---
-    if load_clicked:
-        with st.spinner(f"Loading model {model_id}... This may download weights and take several minutes."):
-            try:
-                sandbox.load_model(model_id)
-                st.session_state["_loaded_model_id"] = model_id
-                st.session_state["_model_ready"] = True
-                _model_ready = True
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Failed to load model: {exc}")
-                st.session_state["_model_ready"] = False
-                _model_ready = False
+    # --- Backend status (uses the early probe results) ---
+    _model_ready = _server_healthy
+    _model_mismatch = bool(not _is_native_backend and _active_model and _active_model != model_id)
+
+    # Fill the sidebar status placeholder created earlier.
+    with _sidebar_status_slot.container():
+        if _model_ready and _is_native_backend:
+            st.success(f"Connected — {_active_model or model_id} · switch freely", icon="\u2705")
+        elif _model_ready and not _model_mismatch:
+            st.success(f"Connected — {_active_model or model_id}", icon="\u2705")
+        elif _model_ready and _model_mismatch:
+            st.info(
+                f"Server has **{_active_label or _active_model}** loaded. "
+                f"Select it in the dropdown, or restart the backend to switch models.",
+                icon="\u2139\uFE0F",
+            )
+        else:
+            st.error("Backend offline", icon="\u274C")
 
     left, right = st.columns([1.2, 0.8])
 
@@ -399,21 +419,25 @@ def main() -> None:
         run_clicked = _generating and bool(st.session_state.get("_pending_turn", {}).get("prompt", "").strip())
 
         if not _model_ready:
-            st.caption("Load a model from the sidebar before running.")
+            st.caption(f"Waiting for backend at {SERVING_URL} — start the server to begin.")
 
 
     with right:
         st.subheader("Model Capabilities")
-        st.markdown(f"**{selected_model_label}**")
-        for _cap_label, _supported in [("🖼️ Images", caps.image), ("🔊 Audio", caps.audio), ("🎬 Video", caps.video)]:
+        # When mismatch, show the *server's* actual model capabilities.
+        _display_label = (_active_label or selected_model_label) if _model_mismatch else selected_model_label
+        _display_caps = get_capabilities(_display_label)
+        st.markdown(f"**{_display_label}**")
+        for _cap_label, _supported in [("🖼️ Images", _display_caps.image), ("🔊 Audio", _display_caps.audio), ("🎬 Video", _display_caps.video)]:
             st.markdown(f"{'✅' if _supported else '❌'} {_cap_label}")
         if _model_ready:
-            st.success(f"Runtime status: {model_id} loaded and ready.")
-        elif model_loaded:
-            st.warning(f"Runtime status: server is up but {model_id} is not pre-loaded. Click Load Model in the sidebar.")
+            st.success(f"Runtime: **{_active_model or model_id}** loaded and ready.")
+        elif _server_healthy:
+            st.info("Runtime: server is up, waiting for model info.")
         else:
             st.warning(
-                f"Runtime status: cold start for {model_id}. Click Load Model in the sidebar to prepare the model before running."
+                f"Runtime: cannot reach backend at {SERVING_URL}. "
+                f"Start the server with `vllm-serving/start_vllm.ps1` (WSL2) or `start_server.ps1` (Windows)."
             )
         st.caption(
             "The app now reports progress stages in both the server logs and the UI: runtime check, processor load, model load, input prep, generation, and decoding."
