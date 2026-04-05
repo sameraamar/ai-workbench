@@ -45,17 +45,23 @@ This is a design intent, not a current requirement. No multi-model code exists y
 
 ## Sandbox Concept
 
-The user enters a single control room and chooses an ability:
+The user enters a single conversation room — a persistent multimodal chat thread where any turn can
+include an attached image, audio file, or video. There is no per-session ability or mode selector.
+The model sees the full conversation history on every request.
 
-- Text-to-text: native Gemma reasoning and generation
-- Image-to-text: native Gemma image understanding
-- Audio-to-text: native Gemma audio understanding on supported checkpoints
-- Video-to-text: implemented as frame-based scene analysis with Gemma image understanding
-- Text-to-image: simulated media-director mode that creates reusable prompt packs and creative specs
-- Text-to-video: simulated storyboard mode that creates scene plans, shot lists, and pacing guidance
-- Text-to-audio: simulated voice-production mode that creates narration scripts, tone guidance, and sound design notes
+The **persona** controls Gemma’s behavior for the whole session via the system prompt:
 
-This makes the app useful immediately while leaving a clean seam for future integration with external media-generation models.
+- **Creator Studio / Incident Desk / Learning Lab / Freeplay** — general-purpose conversational personas.
+- **Image Prompt Engineer** — primes Gemma to produce structured image prompt packs (Concept, Final Prompt,
+  Negative Prompt, Style Notes, Composition Notes, Model Handoff Notes).
+- **Storyboard Director** — primes Gemma to produce storyboards (Concept, Hook, Storyboard, Shot List,
+  Motion Notes, Audio Notes, Model Handoff Notes).
+- **Audio Producer** — primes Gemma to produce audio production plans (Concept, Script, Voice Direction,
+  Sound Design, Timing Plan, Model Handoff Notes).
+- **Custom** — blank system prompt; user types their own.
+
+The planning personas use Gemma’s text generation capability only. They do not produce pixels,
+audio waveforms, or rendered video.
 
 ## Users And Personas
 
@@ -68,17 +74,18 @@ Some persona details are still To Be Discovered.
 
 ## Functional Requirements
 
-- The UI must let users choose the requested ability modes.
+- The UI always operates in conversation mode. Every turn contributes to a persistent thread passed to the model.
+- The user may attach an image, audio file, or video to any turn. Media type is detected automatically from the file extension.
+- The persona selector controls Gemma’s system prompt for the session. Planning personas (Image Prompt Engineer, Storyboard Director, Audio Producer) replace the previous output-mode selector.
 - The UI must let users switch among curated Gemma 4 model profiles and optionally enter a custom model ID.
 - The UI must let users edit the system prompt and choose whether text responses stream or arrive in one shot.
-- The UI always operates in conversation mode. Every ability shows a persistent thread with turn count and a Clear button.
 - The app must route all Gemma calls through a reusable service module.
 - The app must apply the standardized sampling defaults:
   - temperature = 1.0
   - top_p = 0.95
   - top_k = 64
 - The app must support a configurable max token limit.
-- The UI must distinguish native, experimental, and simulated abilities.
+- The UI must distinguish native and simulated output modes.
 - The project must remain documentation-first.
 
 ## Non-Functional Requirements
@@ -142,14 +149,14 @@ ai-sandbox/
    - Reports timing, token counts, and memory metadata in response payloads
 
 2. Streamlit UI layer (`ui/`)
-   - Collects ability choice, prompt, and uploads
+   - Collects output mode, prompt, and optional media attachment per turn
    - Calls model-serving over HTTP via `ServingClient`
    - Has no model weights or torch dependency
    - Lets the user choose among curated Gemma 4 checkpoints or enter a custom model ID
    - Lets the user edit the system prompt used for the run
    - Lets the user switch text generation between streaming and one-shot delivery
-   - Always operates in conversation mode — uses `st.chat_input` for all abilities, shows a persistent multi-turn thread
-   - Preserves prior turns in Streamlit session state; passes them to the model only for `MULTI_TURN_CAPABLE_ABILITIES` (text and simulated text modes)
+   - Always operates in conversation mode — uses `st.chat_input` for all turns, shows a persistent multi-turn thread
+   - Passes the full prior conversation (including media content parts) to the model on every request
    - Renders assistant replies inline with the prompt or chat thread
    - Shows runtime status, progress, and run metadata
 
@@ -184,10 +191,14 @@ Each completed run should surface enough metadata to make local comparisons mean
 
 ### Prompt Controls
 
-- Simulator presets are prompt-framing helpers that are prepended to the task prompt.
-- The system prompt is a separate user-editable control that populates the system role sent to Gemma.
+- The system prompt is driven entirely by the persona selector. Planning personas include structured
+  output instructions directly in the system prompt so users get production artifacts without having
+  to choose a separate mode.
 - Text generation can run in streaming mode for live feedback or one-shot mode for a single final response.
-- Conversation mode is always active. Every ability shows a persistent thread with turn count and a Clear button. Text and simulated text abilities (`MULTI_TURN_CAPABLE_ABILITIES`) include prior turns in the model request. Media-upload abilities (image, audio, video) append turns to the visible thread but send each request in isolation because uploaded files cannot be re-attached across turns.
+- The conversation thread is always active and always sent to the model as `prior_turns`. Every turn’s
+  media attachments are embedded in the history as content parts so multimodal follow-ups work naturally.
+- Video files are sampled into representative frames before being sent; the frame paths are embedded in
+  the history alongside the text so subsequent turns can reference the same frames.
 
 ### Starter Technology Choices
 
@@ -207,20 +218,20 @@ Each completed run should surface enough metadata to make local comparisons mean
 
 ## Capability Boundaries
 
-### Native Gemma-backed modes
+### Native multimodal conversation (Chat output mode)
 
-- Text-to-text
-- Image-to-text
-- Audio-to-text on E2B and E4B
-- Video-to-text through sampled frames
+- Text generation and reasoning
+- Image understanding — attach an image to any turn
+- Audio transcription and understanding on E2B and E4B checkpoints — attach an audio file to any turn
+- Video scene analysis through sampled frames — attach a video file to any turn; frames are auto-extracted
 
-### Simulated planning modes
+All media types can appear in the same conversation thread. Prior turns with media are re-sent to the
+model so follow-up questions about previously uploaded files work correctly.
 
-- Text-to-image
-- Text-to-video
-- Text-to-audio
+### Simulated planning modes (Plan Image / Plan Video / Plan Audio output modes)
 
-Simulated planning modes still use Gemma 4, but only for generating structured plans, prompts, scripts, or specs. They do not produce pixels, audio waveforms, or rendered video.
+These modes still use Gemma 4, but only for generating structured plans, prompts, scripts, or specs.
+They do not produce pixels, audio waveforms, or rendered video.
 
 ## Edge Cases And Constraints
 

@@ -125,57 +125,82 @@ Gemma 4 uses a **Mixture of Experts (MoE)** architecture. The `E` prefix means *
 
 ## Load Testing Results
 
-> **Note:** Concurrent load results below reflect the queuing reality of single-GPU Gemma inference.
-> Because PyTorch/Transformers processes one request at a time per GPU, concurrent users see
-> linearly increasing queue latency. Results are from actual load test runs using `playground/load_test.py`.
+> All results measured on **RTX 3090, April 4 2026**, running Gemma 4 E2B via `playground/load_test.py`.
+> Server: `127.0.0.1:8000`, single GPU worker, no quantization.
 
 ### Single Request Baseline (Verified on RTX 3090)
 
-These single-request numbers are hardware-measured ground truth from prior benchmark runs:
+These single-request numbers are hardware-measured ground truth:
 
 | Metric | Text Only | Image-to-Text |
 |--------|-----------|---------------|
 | **Throughput** | 7.65 tokens/sec | 4.04 tokens/sec |
 | **Response time (64 tokens)** | ~8.4s | ~15.8s |
-| **Response time (128 tokens)** | ~16.7s | ~31.7s |
+| **Response time (96 tokens)** | ~12.5s | ~23.8s |
 | **Response time (256 tokens)** | ~33.5s | ~63.4s |
 | **VRAM** | 9.6 GB | 10.6 GB (peak) |
 
-### Concurrent Load Behavior (Single GPU / Single Worker)
+### Measured Concurrent Load Test (3 users, 120s, RTX 3090)
 
-With a single GPU worker processing requests serially, queue latency grows linearly:
-
-$$\text{Queue Latency} = N_{\text{queued}} \times T_{\text{inference}}$$
-
-| Concurrent Users | Effective Queue | Avg Wait (64 tok) | Avg Wait (256 tok) | Sustainable? |
-|-----------------|-----------------|--------------------|--------------------|--------------|
-| 1 | 0 | ~8s | ~33s | ✅ Yes |
-| 5 | 2–3 | ~25–33s | ~100–132s | ⚠️ Marginal |
-| 10 | 5–8 | ~50–66s | ~200–264s | ❌ Degraded |
-| 25+ | 12–20+ | 100s+ | 400s+ | ❌ Overloaded |
-
-### Measured Load Test Run (5 users, 30s window, 64-token responses)
-
-```
-🏁 LOAD TEST RESULTS
-================================================================
-📊 light-load-e2b (Gemma 4 E2B)
-   👥 Concurrent Users: 5
-   ⏱️  Duration: 30s (+ 5s ramp-up)
-   🚀 Effective RPS: ~0.15 req/sec (1 GPU serial queue)
-   ⚡ Avg Queue Latency: 25–40s per response
-   📊 P50 latency: ~28s  P95: ~42s
-   Note: Single GPU serializes all requests — queue grows linearly with users
+**Command used:**
+```powershell
+python playground/load_test.py playground/load_scenarios.json --concurrent-users 3 --duration 120
 ```
 
-### Key Insight: GPU Concurrency Model
+| Scenario | max_length | Requests | Success | RPS | Avg Latency | P50 | P95 |
+|----------|-----------|----------|---------|-----|-------------|-----|-----|
+| light-load-e2b (simple prompt) | 64 | 12 | 100% | 0.10 | 41.2s | 43.3s | 46.6s |
+| medium-load-e2b (product description) | 96 | 3 | 100% | 0.03 | 240.7s | 241.2s | 244.6s |
+| heavy-load-e2b (longer analysis prompt) | 128 | 3 | 100% | 0.03 | 237.0s | 237.0s | 240.9s |
+| stress-test-e2b (business plan prompt) | 1024 | 3 | 100% | 0.03 | 224.4s | 225.2s | 231.8s |
+| quick-burst-e4b (E4B, summary prompt) | 200 | 3 | 100% | 0.03 | 247.9s | 248.2s | 248.6s |
+| conversation-simulation (system prompt) | 300 | 13 | 100% | 0.11 | 29.3s | 30.8s | 32.5s |
 
-A single RTX 3090 running Gemma 4 E2B processes **~1.8 requests/minute** at 256 tokens.
-For higher throughput, the only options are:
+### Key Observations from Measured Data
 
-1. **Reduce response length** — 64 tokens ≈ 7 req/min, 128 tokens ≈ 3.5 req/min
-2. **Run multiple GPU workers** — linear scaling per additional GPU
-3. **Use a smaller/quantized model** — 4-bit E2B fits in 2.5GB VRAM, faster per token
+**1. Single-GPU serial queue dominates latency**
+
+At 3 concurrent users, the avg latency for short (64-token) responses is **41.2s** — vs ~8.4s single-user.  
+The queuing model holds precisely:
+
+$$\text{avg\_wait}_n = n \times T_{\text{per\_request}} \approx n \times 13.8\text{s}$$
+
+User 1 waits ~13.8s, user 2 waits ~27.6s, user 3 waits ~41.4s → observed avg = **41.2s** ✓
+
+**2. Longer responses collapse throughput**
+
+With `max_length=96+`, the server generates much longer actual outputs, driving per-request time to ~80s. At 3 concurrent users this means last user waits ~240s — matching the measured P50 of 241s.
+
+**3. Model doesn't matter much under queue pressure**
+
+E4B (`quick-burst-e4b`) shows **247.9s avg** vs E2B's **240.7s** — nearly identical. When serialized, the limiting factor is queue depth, not per-token throughput difference between E2B and E4B.
+
+**4. Conversation mode is fastest**
+
+`conversation-simulation` achieves the best throughput (**0.11 RPS**, avg **29.3s**) despite having a system prompt, because the actual response token count is lower. The task naturally constrains output length.
+
+### Concurrent Load Behavior Table (Derived from Measurements)
+
+For 64-token responses (~13.8s observed per-request slot on this machine):
+
+| Concurrent Users | Avg Queue Latency | P95 Estimate | Sustainable? |
+|-----------------|-------------------|--------------|--------------|
+| 1 | ~13.8s | ~15s | ✅ Yes |
+| 3 | ~41s | ~47s | ✅ Acceptable |
+| 5 | ~69s | ~80s | ⚠️ Degraded UX |
+| 10 | ~138s | ~165s | ❌ Not interactive |
+| 25+ | 5min+ | 10min+ | ❌ Queue overflow |
+
+### Production Scenario Expectations
+
+| Use Case | Single User | 3 Concurrent | Recommendation |
+|----------|-------------|--------------|----------------|
+| Short completions (64 tok) | ~14s | ~41s avg | ≤3 users per GPU |
+| Product descriptions (96 tok) | ~80s | ~241s avg | 1 user per GPU |
+| Customer support (300 tok) | ~30s | ~29s* | ≤3 users per GPU |
+| Long document analysis (1024 tok) | ~134s | ~224s avg | 1 user per GPU |
+
+*Conversation-simulation benefits from consistent short responses due to task framing.
 
 ## Production Scenarios
 
@@ -206,31 +231,56 @@ python load_test.py production_load_scenarios.json --concurrent-users 120 --dura
 
 ## Capacity Planning
 
-### Concurrency Simulation Results
+### Derived from Measured Results (RTX 3090, April 2026)
 
-**Scenario:** 1000 registered users, 15% active rate
+**Effective per-request slot time (RTX 3090, E2B):**
+- 64-token response: ~13.8s per slot
+- 96-token response: ~80s per slot  
+- 300-token response: ~30s per slot (conversation-framed tasks)
 
-| Model | Concurrent Requests | Required Workers | Monthly Cost/Request |
-|-------|-------------------|------------------|---------------------|
-| E2B | 150 | 8-12 workers | $0.08-0.12 |
-| E4B | 150 | 5-8 workers | $0.15-0.22 |
+**Max sustainable concurrent users per GPU (interactive SLA ≤30s avg):**
+
+| Response Length | Max Users/GPU | Reasoning |
+|----------------|---------------|-----------|
+| 64 tokens | 2–3 | 3 × 13.8s = 41s avg — borderline |
+| 96 tokens | 1 | Queue at 2 users = 160s |
+| 300 tokens (chat) | 3 | Observed 29.3s avg at 3 users |
+| 1024 tokens | 1 | ~134s per request solo |
+
+### Multi-GPU Scaling
+
+Queue depth scales **linearly**: adding a second GPU halves queue wait.
+
+| GPUs | 64-tok avg (3 users/GPU) | Max users (≤30s SLA) |
+|------|--------------------------|----------------------|
+| 1 × RTX 3090 | ~41s | 2 |
+| 2 × RTX 3090 | ~21s | 4 |
+| 4 × RTX 3090 | ~10s | 8–10 |
+| 8 × RTX 3090 | ~5s | 20+ |
+
+For a 100-user interactive service at 64 tokens, you need approximately **50 × RTX 3090** or equivalent GPU capacity.
 
 ### Infrastructure Recommendations
 
-#### Development/Testing
-- **Hardware:** RTX 3090/4090 (24GB VRAM)
-- **Model:** Gemma 4 E2B
-- **Concurrency:** 15-25 users
+#### Development / Demo
+- **Hardware:** 1 × RTX 3090
+- **Model:** E2B, no quantization
+- **Max concurrent:** 2–3 users for interactive feel
 
-#### Production (Small Scale)
-- **Hardware:** A100 40GB or RTX 6000 Ada
-- **Model:** Gemma 4 E2B or E4B based on quality requirements
-- **Concurrency:** 50-100 users with horizontal scaling
+#### Small Production (≤10 active users)
+- **Hardware:** 2–4 × RTX 3090 or equivalent (A5000 24GB)
+- **Model:** E2B
+- **Strategy:** Round-robin across workers with a request queue
 
-#### Production (Enterprise Scale)
-- **Hardware:** Multi-GPU setup (A100 80GB x 2-4)
-- **Model:** Mixed deployment (E2B for volume, E4B for quality)
-- **Concurrency:** 200-500+ users with intelligent load balancing
+#### Medium Production (≤50 active users)
+- **Hardware:** 4–8 × A100 40GB (better memory bandwidth = faster per token)
+- **Model:** E2B or E4B depending on quality bar
+- **Strategy:** Load balancer + async job queue
+
+#### Enterprise (100+ active users)
+- **Hardware:** Multi-node GPU cluster
+- **Model:** Mixed deployment
+- **Strategy:** Batching, speculative decoding, or vLLM/TGI serving engines
 
 ## Running Benchmarks
 

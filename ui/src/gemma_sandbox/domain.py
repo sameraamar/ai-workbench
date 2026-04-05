@@ -1,25 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
-
-
-class Ability(str, Enum):
-    TEXT_TO_TEXT = "text-to-text"
-    IMAGE_TO_TEXT = "image-to-text"
-    TEXT_TO_IMAGE = "text-to-image"
-    VIDEO_TO_TEXT = "video-to-text"
-    TEXT_TO_VIDEO = "text-to-video"
-    AUDIO_TO_TEXT = "audio-to-text"
-    TEXT_TO_AUDIO = "text-to-audio"
-
-
-@dataclass(frozen=True)
-class AbilitySpec:
-    ability: Ability
-    label: str
-    support_level: str
-    summary: str
 
 
 @dataclass

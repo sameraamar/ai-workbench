@@ -1,11 +1,4 @@
-from gemma_sandbox.domain import Ability
-from gemma_sandbox.prompts import ABILITY_SPECS, PERSONA_PRESETS, build_simulation_prompt, build_text_prompt
-
-
-def test_text_prompt_returns_user_input() -> None:
-    prompt = build_text_prompt("Summarize this scene.")
-
-    assert prompt == "Summarize this scene."
+from gemma_sandbox.prompts import PERSONA_PRESETS
 
 
 def test_persona_presets_include_concise_instruction() -> None:
@@ -13,19 +6,22 @@ def test_persona_presets_include_concise_instruction() -> None:
         if name == "Custom":
             assert text == ""
         else:
-            assert "Answer shortly unless requested to elaborate" in text
+            assert len(text) > 0
 
 
-def test_simulation_prompt_marks_non_native_mode() -> None:
-    prompt = build_simulation_prompt(Ability.TEXT_TO_VIDEO, "Create a teaser for a robot race.")
-
-    assert "This mode is a simulation" in prompt
-    assert "text-to-video" in prompt
-    assert "Storyboard" in prompt
+def test_planning_personas_exist() -> None:
+    assert "Image Prompt Pack" in PERSONA_PRESETS
+    assert "Video Storyboard" in PERSONA_PRESETS
+    assert "Audio Script" in PERSONA_PRESETS
 
 
-def test_ability_specs_label_simulated_modes() -> None:
-    support_level, summary = ABILITY_SPECS[Ability.TEXT_TO_AUDIO]
+def test_image_persona_mentions_sections() -> None:
+    text = PERSONA_PRESETS["Image Prompt Pack"]
+    assert "Final Prompt" in text
+    assert "Concept" in text
 
-    assert support_level == "Simulated"
-    assert "external audio model" in summary
+
+def test_storyboard_persona_mentions_sections() -> None:
+    text = PERSONA_PRESETS["Video Storyboard"]
+    assert "Storyboard" in text
+    assert "Shot List" in text

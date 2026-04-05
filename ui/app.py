@@ -17,10 +17,10 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from gemma_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, MODEL_OPTIONS, SERVING_URL
-from gemma_sandbox.domain import Ability
+from gemma_sandbox.domain import RunResult
 from gemma_sandbox.media import extract_video_frames, persist_upload
 from gemma_sandbox.prompts import PERSONA_PRESETS
-from gemma_sandbox.services.sandbox_service import SandboxService
+from gemma_sandbox.services.sandbox_service import SandboxService, TurnAttachment
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,30 +121,14 @@ def _calculate_tokens_per_second(output_token_count: int | None, elapsed_seconds
     return output_token_count / elapsed_seconds
 
 
-def _format_optional_float(value: object, suffix: str = "") -> str:
-    if isinstance(value, (int, float)):
-        return f"{value:.2f}{suffix}"
-    return "unavailable"
+# File extension sets used to detect what kind of media is attached per turn.
+_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+_AUDIO_EXTS = frozenset({".wav", ".mp3", ".flac", ".ogg", ".m4a"})
+_VIDEO_EXTS = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm"})
 
 
-# Abilities that support multi-turn context — prior turns are included in the model request.
-# Media-upload abilities (image, audio, video) run as isolated requests: uploaded files cannot
-# be re-attached across turns, so the thread is visible in the UI but not re-sent to the model.
-MULTI_TURN_CAPABLE_ABILITIES = {
-    Ability.TEXT_TO_TEXT,
-    Ability.TEXT_TO_IMAGE,
-    Ability.TEXT_TO_VIDEO,
-    Ability.TEXT_TO_AUDIO,
-}
-
-
-def _conversation_key(
-    *,
-    ability: Ability,
-    model_id: str,
-    system_prompt: str,
-) -> str:
-    return "|".join((ability.value, model_id, system_prompt.strip()))
+def _conversation_key(*, model_id: str, system_prompt: str) -> str:
+    return f"{model_id}|{system_prompt.strip()}"
 
 
 def _get_model_history_store() -> dict[str, list[dict]]:
@@ -166,19 +150,24 @@ def _clear_history_for_key(key: str) -> None:
     _get_ui_history_store().pop(key, None)
 
 
-def _render_conversation_history(history: list[dict[str, str]]) -> None:
+def _render_conversation_history(history: list[dict]) -> None:
     if not history:
-        st.caption("Conversation is empty. Ask the first question to start a contextual thread.")
+        st.caption("Conversation is empty. Send a message to start.")
         return
     for message in history:
-        role = message.get("role", "assistant")
+        role = message["role"]
         with st.chat_message("user" if role == "user" else "assistant"):
-            st.markdown(message.get("content", ""))
+            st.markdown(message["text"])
+            labels = message.get("attachment_labels", [])
+            if labels:
+                st.caption("📎 " + ", ".join(labels))
 
 
-def _render_pending_exchange(user_prompt: str) -> st.delta_generator.DeltaGenerator:
+def _render_pending_exchange(user_prompt: str, attachment_labels: list[str]) -> st.delta_generator.DeltaGenerator:
     with st.chat_message("user"):
         st.markdown(user_prompt)
+        if attachment_labels:
+            st.caption("📎 " + ", ".join(attachment_labels))
     with st.chat_message("assistant"):
         placeholder = st.empty()
     return placeholder
@@ -190,8 +179,8 @@ def main() -> None:
     st.markdown('<div class="mono-label">Gemma 4 Sandbox</div>', unsafe_allow_html=True)
     st.title("Gemma Sandbox Arena")
     st.write(
-        "A game-like control room for testing Gemma 4 across native multimodal understanding workflows "
-        "and clearly labeled simulated media-planning workflows."
+        "A multimodal conversation sandbox for Gemma 4. "
+        "Attach images, audio, or video to any message. Responses are always text."
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -233,13 +222,6 @@ def main() -> None:
             else:
                 st.info("Not loaded", icon="\u23F3")
 
-        ability = Ability(
-            st.selectbox(
-                "Choose ability",
-                options=[ability.value for ability in Ability],
-                format_func=lambda value: value.replace("-", " ").title(),
-            )
-        )
         preset_name = st.selectbox("Assistant persona", options=list(PERSONA_PRESETS))
         preset_text = PERSONA_PRESETS[preset_name]
         if "_last_persona" not in st.session_state:
@@ -286,14 +268,10 @@ def main() -> None:
     left, right = st.columns([1.2, 0.8])
 
     with left:
-        spec = sandbox.get_ability_spec(ability)
-        if ability not in MULTI_TURN_CAPABLE_ABILITIES:
-            st.caption("Upload-based modes run as isolated requests — prior turns are shown in the thread but not re-sent to the model.")
-        st.markdown(f'<div class="support-chip">{spec.support_level}</div>', unsafe_allow_html=True)
-        st.write(spec.summary)
+        st.markdown('<div class="support-chip">Native</div>', unsafe_allow_html=True)
+        st.write(f"Persona: **{preset_name}**")
 
         active_conversation_key = _conversation_key(
-            ability=ability,
             model_id=model_id,
             system_prompt=system_prompt,
         )
@@ -313,21 +291,13 @@ def main() -> None:
 
         pending_exchange_slot = st.empty()
 
-        uploaded_file = None
-        if ability is Ability.IMAGE_TO_TEXT:
-            uploaded_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg", "webp"])
-        elif ability is Ability.AUDIO_TO_TEXT:
-            uploaded_file = st.file_uploader("Upload audio", type=["wav", "mp3", "flac", "ogg", "m4a"])
-        elif ability is Ability.VIDEO_TO_TEXT:
-            uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "mkv", "webm"])
-
-        st.markdown(
-            '<div class="prompt-label-row">'
-            '<span class="mat-icon">face</span>'
-            '<span>Prompt</span>'
-            '</div>',
-            unsafe_allow_html=True,
+        uploaded_file = st.file_uploader(
+            "Attach media (optional)",
+            type=["png", "jpg", "jpeg", "webp", "wav", "mp3", "flac", "ogg", "m4a", "mp4", "mov", "avi", "mkv", "webm"],
+            help="Attach an image, audio file, or video to include with your next message. Video is automatically sampled into representative frames.",
+            key=f"upload_{st.session_state.get('_uploader_key', 0)}",
         )
+
         user_prompt = st.chat_input(
             "Type your message and press Enter to run.",
             disabled=not _model_ready,
@@ -338,13 +308,12 @@ def main() -> None:
             st.caption("Load a model from the sidebar before running.")
 
     with right:
-        st.subheader("Mode Guide")
-        st.write(
-            "Native modes call Gemma directly. Experimental mode samples video frames. Simulated modes use Gemma to plan artifacts for a future media generator."
-        )
-        st.info(
-            "Recommended simulator usage: Multimodal Situation Room. It turns the app into an operator console for analysis, transcription, prompt design, and storyboard planning."
-        )
+        st.subheader("Personas")
+        for name, text in PERSONA_PRESETS.items():
+            active = " ◀" if name == preset_name else ""
+            st.markdown(f"**{name}**{active}")
+            if text:
+                st.caption(text[:120] + ("…" if len(text) > 120 else ""))
         if _model_ready:
             st.success(f"Runtime status: {model_id} loaded and ready.")
         elif model_loaded:
@@ -361,21 +330,44 @@ def main() -> None:
         return
 
     uploaded_path: Path | None = None
-    frame_paths: list[Path] | None = None
+    frame_paths: list[Path] = []
+    attachment_labels: list[str] = []
+    attachment = TurnAttachment()
     run_status = st.status("Queued sandbox run.", expanded=True)
     run_progress = st.progress(0, text="Waiting to start...")
-    pending_exchange_slot.empty()
-    with pending_exchange_slot.container():
-        live_response_placeholder = _render_pending_exchange(user_prompt=user_prompt)
-    if stream_output:
-        live_response_placeholder.caption("No tokens received yet.")
-    else:
-        live_response_placeholder.caption("Streaming disabled. The full response will appear when generation completes.")
 
     def emit_progress(stage: str, progress_value: float, message: str) -> None:
         LOGGER.info("ui-progress [%s] %s", stage, message)
         run_status.write(message)
         run_progress.progress(min(max(progress_value, 0.0), 1.0), text=message)
+
+    emit_progress("start", 0.02, "Preparing request...")
+    if uploaded_file is not None:
+        uploaded_path = persist_upload(uploaded_file)
+        ext = Path(uploaded_file.name).suffix.lower()
+        label = uploaded_file.name
+        if ext in _IMAGE_EXTS:
+            attachment.image_paths.append(uploaded_path)
+            attachment_labels.append(f"image: {label}")
+        elif ext in _AUDIO_EXTS:
+            attachment.audio_path = uploaded_path
+            attachment_labels.append(f"audio: {label}")
+        elif ext in _VIDEO_EXTS:
+            emit_progress("video", 0.10, "Extracting representative video frames...")
+            frame_paths = extract_video_frames(uploaded_path)
+            attachment.video_frame_paths = frame_paths
+            attachment_labels.append(f"video: {label} ({len(frame_paths)} frames)")
+
+    pending_exchange_slot.empty()
+    with pending_exchange_slot.container():
+        live_response_placeholder = _render_pending_exchange(
+            user_prompt=user_prompt,
+            attachment_labels=attachment_labels,
+        )
+    if stream_output:
+        live_response_placeholder.caption("No tokens received yet.")
+    else:
+        live_response_placeholder.caption("Streaming disabled. The full response will appear when generation completes.")
 
     def emit_partial_text(text: str) -> None:
         preview = text.strip() or "Receiving generated tokens..."
@@ -384,21 +376,10 @@ def main() -> None:
     started_at = perf_counter()
 
     try:
-        emit_progress("start", 0.02, "Preparing request...")
-        if uploaded_file is not None:
-            uploaded_path = persist_upload(uploaded_file)
-        if ability is Ability.VIDEO_TO_TEXT:
-            if uploaded_path is None:
-                raise ValueError("Upload a video before running video-to-text mode.")
-            emit_progress("video", 0.10, "Extracting representative video frames...")
-            frame_paths = extract_video_frames(uploaded_path)
-
         result = sandbox.run(
-            ability=ability,
             user_prompt=user_prompt,
-            uploaded_path=uploaded_path,
-            frame_paths=frame_paths,
-            prior_messages=model_history if ability in MULTI_TURN_CAPABLE_ABILITIES else None,
+            attachment=attachment,
+            prior_turns=model_history,
             progress_callback=emit_progress,
             token_callback=emit_partial_text if stream_output else None,
         )
@@ -406,16 +387,23 @@ def main() -> None:
         run_status.update(label="Sandbox run complete.", state="complete", expanded=False)
         live_response_placeholder.empty()
 
-        if ability in MULTI_TURN_CAPABLE_ABILITIES:
-            model_history.append({"role": "user", "content": [{"type": "text", "text": result.prompt_used}]})
-            model_history.append({"role": "assistant", "content": [{"type": "text", "text": result.response_text}]})
-        ui_history.append({"role": "user", "content": user_prompt})
-        ui_history.append({"role": "assistant", "content": result.response_text})
-        turn_counter_slot.caption(f"Conversation turns: {len(ui_history) // 2}")
-        pending_exchange_slot.empty()
-        conversation_history_slot.empty()
-        with conversation_history_slot.container():
-            _render_conversation_history(ui_history)
+        # Append the current turn to both histories.
+        # model_history receives full content parts (including media) for the next request.
+        # ui_history receives display-only data for rendering the thread.
+        user_content: list[dict] = []
+        for path in attachment.image_paths:
+            user_content.append({"type": "image", "url": path.as_posix()})
+        if attachment.audio_path is not None:
+            user_content.append({"type": "audio", "audio": attachment.audio_path.as_posix()})
+        for path in attachment.video_frame_paths:
+            user_content.append({"type": "image", "url": path.as_posix()})
+        user_content.append({"type": "text", "text": result.prompt_used})
+        model_history.append({"role": "user", "content": user_content})
+        model_history.append({"role": "assistant", "content": [{"type": "text", "text": result.response_text}]})
+        ui_history.append({"role": "user", "text": user_prompt, "attachment_labels": attachment_labels})
+        ui_history.append({"role": "assistant", "text": result.response_text})
+        st.session_state["_uploader_key"] = st.session_state.get("_uploader_key", 0) + 1
+        st.rerun()
 
         st.subheader("Result")
         st.caption(f"Support level: {result.support_level}")
@@ -490,7 +478,6 @@ def main() -> None:
                     "generation_output_tokens_per_second": generation_tokens_per_second,
                     "memory": memory,
                     "support_level": result.support_level,
-                    "ability": ability.value,
                     "persona": preset_name,
                     "system_prompt": system_prompt,
                     "conversation_turn_count": len(ui_history) // 2,
@@ -501,7 +488,7 @@ def main() -> None:
                     "top_p": config.generation.top_p,
                     "top_k": config.generation.top_k,
                     "uploaded_file": uploaded_file.name if uploaded_file is not None else None,
-                    "sampled_frame_count": len(frame_paths) if frame_paths else 0,
+                    "sampled_frame_count": len(frame_paths),
                 }
             )
 

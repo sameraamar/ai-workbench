@@ -172,6 +172,21 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
 - Notes: Single-turn is architecturally identical to one-turn conversation. Keeping a separate code path was wrong design — eliminated ~80 lines of workaround code.
 - Dependencies: 1.11, 1.12
 
+### 1.14 Replace OutputMode selector with planning personas
+- Status: [x]
+- Started:
+- Completed:
+- Included in version: 0.1.12
+- Acceptance criteria:
+  - `OutputMode` enum, `OutputModeSpec`, `OUTPUT_MODE_SPECS`, and `build_simulation_prompt` are deleted.
+  - Three planning personas added to `PERSONA_PRESETS`: Image Prompt Engineer, Storyboard Director, Audio Producer.
+  - Persona system prompt controls all output framing; no separate mode selector exists in the UI.
+  - `SandboxService.run()` has no `output_mode` parameter.
+  - All 7 UI tests pass.
+- Validation: Removed `OutputMode` and related code across domain.py, prompts.py, sandbox_service.py, __init__.py, app.py. Tests updated and passing 7/7.
+- Notes: Planning output format is now controlled entirely by the system prompt selected via persona. This is architecturally cleaner and consistent with how LLM system prompts actually work.
+- Dependencies: 1.13
+
 ### 1.7 Add environment bootstrap
 - Status: [x]
 - Started:
@@ -421,10 +436,12 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - Usage examples and result interpretation guidance are provided.
 - Validation:
   - Created `docs/benchmarks.md` with comprehensive benchmarking documentation.
-  - Documented actual RTX 3090 performance results: 7.65 tok/s average for E2B, 4.04 tok/s for image-to-text.
-  - Included load testing results showing optimal concurrency (15-25 users) and breaking points (50+ users).
-  - Provided capacity planning guidance with infrastructure recommendations for different scales.
-  - Added production scenario templates with SLA expectations and performance analysis.
+  - Ran actual concurrent load tests on RTX 3090 (April 4 2026): 3 concurrent users, 120s, 6 scenarios.
+  - Measured key finding: per-request processing slot = ~13.8s for 64-token responses. Queue latency at 3 users = 41.2s avg, P95 46.6s — matches linear queuing model exactly.
+  - Longer responses (96+ tokens) drive avg latency to 240s at 3 concurrent users due to ~80s per-slot cost.
+  - E4B vs E2B under queue pressure: virtually identical (247.9s vs 240.7s) — queue depth dominates.
+  - Results saved to `playground/results.json` for reference.
+  - Established practical production limit: ≤3 concurrent users per GPU for interactive short completions.
 - Notes:
   - Corrected model size documentation: E2B/E4B naming reflects effective (active MoE) param counts — 2.3B effective / 5.1B total and 4.5B effective / 8B total respectively.
   - Established performance baselines for capacity planning and infrastructure decisions.
