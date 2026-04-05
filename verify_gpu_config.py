@@ -9,8 +9,8 @@ Usage:
     python verify_gpu_config.py
     
     # Or with specific settings:
-    GEMMA_FORCE_CPU=1 python verify_gpu_config.py
-    GEMMA_GPU_ID=1 python verify_gpu_config.py
+    MODEL_FORCE_CPU=1 python verify_gpu_config.py
+    MODEL_GPU_ID=1 python verify_gpu_config.py
 """
 
 import os
@@ -30,10 +30,10 @@ def check_environment_variables():
     # Check environment variables
     env_vars = {
         "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "Not set"),
-        "GEMMA_FORCE_CPU": os.environ.get("GEMMA_FORCE_CPU", "0"),  
-        "GEMMA_GPU_ID": os.environ.get("GEMMA_GPU_ID", "Not set"),
-        "GEMMA_DEVICE_MAP": os.environ.get("GEMMA_DEVICE_MAP", "auto"),
-        "GEMMA_QUANTIZE_4BIT": os.environ.get("GEMMA_QUANTIZE_4BIT", "0"),
+        "MODEL_FORCE_CPU": os.environ.get("MODEL_FORCE_CPU", "0"),  
+        "MODEL_GPU_ID": os.environ.get("MODEL_GPU_ID", "Not set"),
+        "MODEL_DEVICE_MAP": os.environ.get("MODEL_DEVICE_MAP", "auto"),
+        "MODEL_QUANTIZE_4BIT": os.environ.get("MODEL_QUANTIZE_4BIT", "0"),
     }
     
     print("Environment Variables:")
@@ -68,7 +68,7 @@ def check_pytorch_availability():
 def check_config_parsing():
     """Check how the configuration would be parsed."""
     try:
-        from gemma_serving.config import ServingConfig
+        from model_serving.config import ServingConfig
         
         print("Parsed Configuration:")
         config = ServingConfig()
@@ -79,7 +79,7 @@ def check_config_parsing():
         print()
         
     except ImportError:
-        print("⚠️  Could not import gemma_serving.config")
+        print("⚠️  Could not import model_serving.config")
         print("    Make sure you're running from the repository root")
         print()
 
@@ -93,11 +93,11 @@ def main():
     print("🎯 Recommendations:")
     
     cuda_visible = env_vars.get("CUDA_VISIBLE_DEVICES", "Not set")
-    force_cpu = env_vars.get("GEMMA_FORCE_CPU", "0")
+    force_cpu = env_vars.get("MODEL_FORCE_CPU", "0")
     
     if force_cpu in ("1", "true", "True"):
         print("  • CPU mode is forced - AI inference will be slow")
-        print("    Remove GEMMA_FORCE_CPU to enable GPU")
+        print("    Remove MODEL_FORCE_CPU to enable GPU")
         
     elif cuda_visible == "":
         print("  • CUDA_VISIBLE_DEVICES is empty - no GPUs visible")

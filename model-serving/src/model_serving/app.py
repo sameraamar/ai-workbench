@@ -244,7 +244,7 @@ class _JobRuntime:
 def create_low_cost_app(
     gateway: InferenceGateway | None = None,
     config: LowCostServingConfig | None = None,
-    gemma_service: Any | None = None,
+    model_service: Any | None = None,
 ) -> FastAPI:
     runtime = _JobRuntime(gateway or StubLowCostGateway(), config or LowCostServingConfig())
 
@@ -278,7 +278,7 @@ def create_low_cost_app(
 
     app = FastAPI(title="Model Serving", lifespan=lifespan)
 
-    _model_service = gemma_service  # backward-compat param name
+    _model_service = model_service
     _active_model_id: str | None = None
 
     def _get_model_service(model_id: str | None = None):

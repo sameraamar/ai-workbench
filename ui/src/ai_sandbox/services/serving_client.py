@@ -124,6 +124,18 @@ class ServingClient:
         resolved_model = model_id or self.get_active_model_id() or "default"
 
         openai_messages = _to_openai_messages(messages)
+        # Log converted message summary for diagnostics
+        for _mi, _m in enumerate(openai_messages):
+            _c = _m.get("content")
+            if isinstance(_c, list):
+                for _bi, _b in enumerate(_c):
+                    _bt = _b.get("type", "?")
+                    if _bt == "image_url":
+                        _url = _b.get("image_url", {}).get("url", "")
+                        LOGGER.info(
+                            "MSG_DIAG: msg[%d][%d] image_url len=%d starts=%r",
+                            _mi, _bi, len(_url), _url[:50],
+                        )
 
         # Build optional extra_body for vLLM-specific params.
         extra_body: dict[str, Any] = {}
@@ -297,9 +309,18 @@ def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     parts.append({"type": "text", "text": block.get("text", "")})
                 elif block_type == "image":
                     url = block.get("url", "")
+                    resolved = _ensure_data_uri_or_url(url)
+                    if not resolved:
+                        # Stale temp file or empty URL — skip this image
+                        # so the server doesn't receive an unresolvable reference.
+                        LOGGER.warning(
+                            "Dropping unresolvable image from message: %s",
+                            url[:80] if url else "(empty)",
+                        )
+                        continue
                     parts.append({
                         "type": "image_url",
-                        "image_url": {"url": _ensure_data_uri_or_url(url)},
+                        "image_url": {"url": resolved},
                     })
                 elif block_type == "audio":
                     # vLLM does not have a standard audio content type in
@@ -340,5 +361,8 @@ def _ensure_data_uri_or_url(url: str) -> str:
         data = base64.b64encode(path.read_bytes()).decode("ascii")
         return f"data:{mime};base64,{data}"
 
-    # Can't resolve — return as-is (server will error if invalid)
-    return url
+    # Can't resolve — return empty string so _to_openai_messages can
+    # drop this block.  This prevents server crashes when prior-turn temp
+    # files have been cleaned up.
+    LOGGER.warning("Image file not found: %s", url)
+    return ""

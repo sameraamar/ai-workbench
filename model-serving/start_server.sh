@@ -42,9 +42,9 @@ else
 fi
 
 # --- Print config summary -------------------------------------------------
-quantize=$( [[ "${GEMMA_QUANTIZE_4BIT:-0}" == "1" ]] && echo "ENABLED"  || echo "DISABLED" )
-compile=$(  [[ "${GEMMA_TORCH_COMPILE:-1}"  == "0" ]] && echo "DISABLED" || echo "ENABLED"  )
-memopt=$(   [[ "${GEMMA_MEMORY_OPT:-1}"     == "0" ]] && echo "DISABLED" || echo "ENABLED"  )
+quantize=$( [[ "${MODEL_QUANTIZE_4BIT:-0}" == "1" ]] && echo "ENABLED"  || echo "DISABLED" )
+compile=$(  [[ "${MODEL_TORCH_COMPILE:-1}"  == "0" ]] && echo "DISABLED" || echo "ENABLED"  )
+memopt=$(   [[ "${MODEL_MEMORY_OPT:-1}"     == "0" ]] && echo "DISABLED" || echo "ENABLED"  )
 
 echo "   Quantization : $quantize"
 echo "   Torch Compile: $compile"

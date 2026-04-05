@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gemma_sandbox.config import AppConfig
-from gemma_sandbox.services.sandbox_service import SandboxService, TurnAttachment
+from ai_sandbox.config import AppConfig
+from ai_sandbox.services.sandbox_service import SandboxService, TurnAttachment
 
 
 def _fake_generate(messages, *, model_id=None, max_new_tokens=256, temperature=1.0, top_p=0.95, top_k=64, enable_thinking=False, progress_callback=None, token_callback=None):

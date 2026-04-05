@@ -9,7 +9,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoProcessor
 
 
-MODEL_ID = os.getenv("GEMMA_MODEL_ID", "google/gemma-4-E2B-it")
+MODEL_ID = os.getenv("MODEL_ID", "google/gemma-4-E2B-it")
 TEMPERATURE = 1.0
 TOP_P = 0.95
 TOP_K = 64

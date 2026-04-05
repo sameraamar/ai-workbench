@@ -25,8 +25,8 @@ repo_root = Path(__file__).parent.parent
 model_serving_path = repo_root / "model-serving" / "src"
 sys.path.insert(0, str(model_serving_path))
 
-from gemma_serving.config import ServingConfig, GenerationSettings
-from gemma_serving.gemma_service import GemmaService
+from model_serving.config import ServingConfig, GenerationSettings
+from model_serving.model_service import ModelService
 
 def setup_logging():
     """Setup logging to see optimization details."""
@@ -60,7 +60,7 @@ def test_configuration(config_name: str, config: ServingConfig, test_prompt: str
             torch.cuda.empty_cache()
         
         # Initialize service
-        service = GemmaService(config)
+        service = ModelService(config)
         
         # Load model (measure time)
         load_start = time.perf_counter()
@@ -289,14 +289,14 @@ def main():
         print(f"   Best configuration: {best['config_name']}")
         
         if "4-bit" in best['config_name']:
-            print("   export GEMMA_QUANTIZE_4BIT=1")
+            print("   export MODEL_QUANTIZE_4BIT=1")
         if "All Optimizations" in best['config_name']:
-            print("   export GEMMA_TORCH_COMPILE=1")
-            print("   export GEMMA_FLASH_ATTENTION=1")
-            print("   export GEMMA_MEMORY_OPT=1")
-            print("   export GEMMA_INFERENCE_OPT=1")
+            print("   export MODEL_TORCH_COMPILE=1")
+            print("   export MODEL_FLASH_ATTENTION=1")
+            print("   export MODEL_MEMORY_OPT=1")
+            print("   export MODEL_INFERENCE_OPT=1")
             if "Max Autotune" in best['config_name']:
-                print("   export GEMMA_COMPILE_MODE=max-autotune")
+                print("   export MODEL_COMPILE_MODE=max-autotune")
 
 if __name__ == "__main__":
     main()

@@ -21,8 +21,8 @@ repo_root = Path(__file__).parent.parent
 model_serving_path = repo_root / "model-serving" / "src"
 sys.path.insert(0, str(model_serving_path))
 
-from gemma_serving.config import ServingConfig, GenerationSettings
-from gemma_serving.gemma_service import GemmaService
+from model_serving.config import ServingConfig, GenerationSettings
+from model_serving.model_service import ModelService
 
 def setup_logging():
     """Setup logging to see optimization details."""
@@ -40,7 +40,7 @@ def test_config(name: str, config: ServingConfig):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     
-    service = GemmaService(config)
+    service = ModelService(config)
     
     # Load model and measure time
     load_start = time.perf_counter()
@@ -143,9 +143,9 @@ def main():
         if results["Baseline"] == best_rate:
             print(f"   🎯 Use baseline configuration for best performance")
         elif results["Memory Optimized"] == best_rate:
-            print(f"   🎯 Use memory optimizations: GEMMA_MEMORY_OPT=1, GEMMA_INFERENCE_OPT=1")
+            print(f"   🎯 Use memory optimizations: MODEL_MEMORY_OPT=1, MODEL_INFERENCE_OPT=1")
         elif results["4-bit Quantized"] == best_rate:
-            print(f"   🎯 Use quantization: GEMMA_QUANTIZE_4BIT=1")
+            print(f"   🎯 Use quantization: MODEL_QUANTIZE_4BIT=1")
 
 if __name__ == "__main__":
     main()

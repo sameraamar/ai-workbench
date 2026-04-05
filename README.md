@@ -1,6 +1,6 @@
-# Gemma Sandbox Arena
+# AI Workbench
 
-A local-first sandbox for exploring multimodal AI models through text, image, audio, and video understanding workflows. Currently built around Google Gemma 4, with a serving research toolkit for benchmarking and capacity planning.
+A local-first sandbox for exploring multimodal AI models through text, image, audio, and video understanding workflows, with a serving research toolkit for benchmarking and capacity planning.
 
 The UI and model-serving backend communicate through a generic `POST /generate` API, so swapping or adding models (Llama, Phi, Mistral, etc.) only requires changes inside `model-serving/`.
 
@@ -92,7 +92,7 @@ These models require 40–80 GB VRAM (A100, H100 class) and are not practical fo
 ### Cost-Effective Strategies
 
 1. **Start with E2B on a 12–16 GB GPU.** Validate rewrite quality before investing in larger hardware.
-2. **Use quantization (8-bit or 4-bit)** to fit larger models on smaller GPUs, at a small quality cost.
+2. **Use quantization (8-bit or 4-bit)** to fit larger models on smaller GPUs — **text-only tasks only**. ⚠️ Quantization destroys image/multimodal understanding.
 3. **Use cloud GPU spot instances** (Colab T4 free tier, Lambda Labs, RunPod, Vast.ai) for experimentation before buying hardware.
 4. **Reduce `max_new_tokens`** to lower latency. Many listing rewrites complete well under 192 tokens.
 5. **Keep image analysis asynchronous.** Multimodal requests are 2–3× slower than text-only; queue them as background jobs.
@@ -108,7 +108,7 @@ AMD Radeon(TM) Graphics                     (integrated, not usable)
 ```
 
 - **Below the 12 GB minimum** for even the smallest model (E2B) in FP16.
-- With **4-bit quantization** (`GEMMA_QUANTIZE_4BIT=1`), E2B drops to ~1.5–2 GB VRAM and **fits comfortably**. See [4-Bit Quantization](#4-bit-quantization) below.
+- With **4-bit quantization** (`MODEL_QUANTIZE_4BIT=1`), E2B drops to ~1.5–2 GB VRAM and **fits comfortably** for **text-only tasks**. See [4-Bit Quantization](#4-bit-quantization) below. **⚠️ Image understanding will NOT work with quantization enabled.**
 - E4B in 4-bit (~4–5 GB) is possible but tight — may OOM on longer prompts.
 - Without quantization, this machine is **CPU-only territory** (~35–43 s per rewrite).
 
@@ -159,19 +159,30 @@ If this prints `CUDA available: False` despite having an NVIDIA GPU, ensure you 
 
 ### 4-Bit Quantization
 
-The model-serving backend supports NF4 quantization via [bitsandbytes](https://github.com/TimDettmers/bitsandbytes), which reduces VRAM usage by ~4× at a small quality cost. This is how lower-VRAM GPUs (8–12 GB) can run models that would otherwise not fit.
+> **⚠️ CRITICAL WARNING: Quantization breaks image/multimodal understanding!**
+>
+> NF4 4-bit quantization **destroys the vision tower** on all tested multimodal models.
+> With quantization enabled, the model **cannot see images at all** — it will say
+> "Please provide an image" or hallucinate nonsense ("Pepsi", "ESPN", "epip")
+> instead of describing the actual picture. This was confirmed on both Gemma 4 E2B
+> and Mistral Small 3.1.
+>
+> **Only use quantization for pure text workloads on low-VRAM GPUs (<12 GB).**
+> If you need image, audio, or video understanding, keep `MODEL_QUANTIZE_4BIT=0`.
 
-**Enable it** by setting the `GEMMA_QUANTIZE_4BIT` environment variable before starting the server:
+The model-serving backend supports NF4 quantization via [bitsandbytes](https://github.com/TimDettmers/bitsandbytes), which reduces VRAM usage by ~4× but **at a severe quality cost for multimodal tasks**. This is how lower-VRAM GPUs (8–12 GB) can run models that would otherwise not fit — **for text-only workloads**.
+
+**Enable it** by setting the `MODEL_QUANTIZE_4BIT` environment variable before starting the server:
 
 ```powershell
 # PowerShell
-$env:GEMMA_QUANTIZE_4BIT = "1"
-uvicorn gemma_serving.app:app
+$env:MODEL_QUANTIZE_4BIT = "1"
+uvicorn model_serving.app:app
 ```
 
 ```bash
 # bash / zsh
-GEMMA_QUANTIZE_4BIT=1 uvicorn gemma_serving.app:app
+MODEL_QUANTIZE_4BIT=1 uvicorn model_serving.app:app
 ```
 
 **Prerequisite:** install `bitsandbytes`:
@@ -187,18 +198,20 @@ pip install bitsandbytes
 | Gemma 4 E2B | ~5–6 GB | ~1.5–2 GB | Yes |
 | Gemma 4 E4B | ~9–10 GB | ~4–5 GB | Tight, may OOM on long prompts |
 
+> **⚠️ Reminder:** These VRAM savings come at the cost of completely broken image understanding. Only use for text-only tasks.
+
 **How it works** (`model_service.py` → `_build_model_load_kwargs`):
-- When `GEMMA_QUANTIZE_4BIT=1`, a `BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")` is passed to `from_pretrained()`.
+- When `MODEL_QUANTIZE_4BIT=1`, a `BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")` is passed to `from_pretrained()`.
 - Compute dtype remains `bfloat16` on CUDA, so inference math stays in half-precision while weights are stored in 4-bit.
 - `device_map="auto"` still applies — the GPU is used automatically.
 
 ### Input Token Limit
 
-Attention memory scales quadratically with input length under the default `sdpa` implementation. To prevent CUDA OOM on unexpectedly long prompts, the server truncates inputs that exceed `GEMMA_MAX_INPUT_TOKENS` (default: 8192) and logs a warning. Adjust in `model-serving/.env`:
+Attention memory scales quadratically with input length under the default `sdpa` implementation. To prevent CUDA OOM on unexpectedly long prompts, the server truncates inputs that exceed `MODEL_MAX_INPUT_TOKENS` (default: 8192) and logs a warning. Adjust in `model-serving/.env`:
 
 ```dotenv
 # Raise for long-document workflows (24 GB GPU, fp16, sdpa can handle ~16K safely)
-GEMMA_MAX_INPUT_TOKENS=16384
+MODEL_MAX_INPUT_TOKENS=16384
 ```
 
 **Flash Attention 2** would remove this concern entirely (fused CUDA kernel, true $O(n)$ memory, ~10–30% faster on long sequences), but `flash-attn` has no prebuilt Windows wheels — it requires compiling C++/CUDA from source, which is only practical on Linux/WSL2. On Windows native, SDPA is the best available option and handles typical workloads well.
@@ -208,17 +221,17 @@ GEMMA_MAX_INPUT_TOKENS=16384
 ### Main View — General Persona
 Sidebar shows the **Load Model** button, **Assistant persona** dropdown, and editable **System prompt**. The chat input stays disabled until a model is loaded. The right panel lists all available personas with the active one marked.
 
-![Gemma Sandbox Arena — main view with General persona, Load Model button, and system prompt](docs/screenshots/ui-main-view.png)
+![AI Workbench — main view with General persona, Load Model button, and system prompt](docs/screenshots/ui-main-view.png)
 
 ### Image Prompt Pack Persona
 Switching the persona to **Image Prompt Pack** updates the system prompt to an image production director that generates structured prompt packs with Concept, Final Prompt, Negative Prompt, and Style Notes sections.
 
-![Gemma Sandbox Arena — Image Prompt Pack persona with production-ready system prompt](docs/screenshots/ui-persona-image-prompt.png)
+![AI Workbench — Image Prompt Pack persona with production-ready system prompt](docs/screenshots/ui-persona-image-prompt.png)
 
 ### Video Storyboard Persona
-The **Video Storyboard** persona primes Gemma as a video production director, producing structured storyboards with Shot Lists, Motion Notes, and Audio Notes.
+The **Video Storyboard** persona primes the model as a video production director, producing structured storyboards with Shot Lists, Motion Notes, and Audio Notes.
 
-![Gemma Sandbox Arena — Video Storyboard persona with storyboard system prompt](docs/screenshots/ui-persona-video-storyboard.png)
+![AI Workbench — Video Storyboard persona with storyboard system prompt](docs/screenshots/ui-persona-video-storyboard.png)
 
 ## Quick Start
 
@@ -250,7 +263,7 @@ pip install -r ui/requirements.txt
 
 # 4. Copy and configure environment files
 copy model-serving\.env.example model-serving\.env
-# Set GEMMA_FASTAPI_GATEWAY=gemma in model-serving/.env to enable real model inference
+# Set MODEL_GATEWAY=model in model-serving/.env to enable real model inference
 # (the default "stub" gateway returns empty responses without loading the model)
 copy ui\.env.example ui\.env
 # Defaults work out-of-box; edit ui/.env only if backend is not at http://localhost:8000
@@ -312,7 +325,7 @@ python playground/benchmark_runner.py model-serving/tests/scenarios.json
 # Run real Gemma inference benchmarks
 $env:PYTHONPATH = "model-serving\src"   # Windows PowerShell
 python playground/benchmark_runner.py model-serving/docs/scenarios/ebay-listing-benchmarks.json \
-  --target gemma_serving.benchmark_targets:benchmark_listing_rewrite
+  --target model_serving.planning.benchmark_targets:benchmark_listing_rewrite
 
 # Run concurrent load testing (10-500+ concurrent users)
 python playground/load_test.py playground/load_scenarios.json --concurrent-users 50 --duration 120

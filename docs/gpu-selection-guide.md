@@ -21,13 +21,13 @@ $env:CUDA_VISIBLE_DEVICES="0,1"
 $env:CUDA_VISIBLE_DEVICES=""
 
 # Force CPU via config (alternative)
-$env:GEMMA_FORCE_CPU="1"
+$env:MODEL_FORCE_CPU="1"
 
 # Use specific GPU via config
-$env:GEMMA_GPU_ID="1"
+$env:MODEL_GPU_ID="1"
 
 # Custom device mapping
-$env:GEMMA_DEVICE_MAP="cpu"
+$env:MODEL_DEVICE_MAP="cpu"
 ```
 
 ### Bash Examples:
@@ -38,9 +38,9 @@ export CUDA_VISIBLE_DEVICES="1"    # GPU 1 only
 export CUDA_VISIBLE_DEVICES="0,1"  # Multiple GPUs
 export CUDA_VISIBLE_DEVICES=""     # CPU only
 
-# Or use Gemma-specific configs
-export GEMMA_FORCE_CPU="1"
-export GEMMA_GPU_ID="1" 
+# Or use config variables
+export MODEL_FORCE_CPU="1"
+export MODEL_GPU_ID="1" 
 ```
 
 ## Configuration Files (.env)
@@ -64,24 +64,24 @@ cp ui/.env.example ui/.env
 **Model-serving GPU configuration:**
 ```bash
 # model-serving/.env
-GEMMA_FORCE_CPU=0          # Set to 1 to force CPU mode
-GEMMA_GPU_ID=1             # Use specific GPU (0, 1, 2, etc.)
-GEMMA_DEVICE_MAP=auto      # Device mapping strategy
-GEMMA_QUANTIZE_4BIT=0      # Enable 4-bit quantization to save memory
+MODEL_FORCE_CPU=0          # Set to 1 to force CPU mode
+MODEL_GPU_ID=1             # Use specific GPU (0, 1, 2, etc.)
+MODEL_DEVICE_MAP=auto      # Device mapping strategy
+MODEL_QUANTIZE_4BIT=0      # Enable 4-bit quantization to save memory
 ```
 
 **UI configuration (connect to model-serving):**
 ```bash
 # ui/.env  
-GEMMA_SERVING_URL=http://localhost:8000    # Backend URL
-GEMMA_MODEL_ID=google/gemma-4-E2B-it       # Model selection
+MODEL_SERVING_URL=http://localhost:8000    # Backend URL
+MODEL_ID=google/gemma-4-E2B-it             # Model selection
 ```
 
 ### 3. Start each component normally:
 ```powershell
 # Start model-serving (loads .env automatically)
 cd model-serving
-uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+uvicorn model_serving.app:app --host 127.0.0.1 --port 8000
 
 # Start UI (loads .env automatically)  
 cd ui
@@ -93,15 +93,15 @@ streamlit run app.py
 ```powershell
 # Start with GPU 0 only
 $env:CUDA_VISIBLE_DEVICES="0"
-uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+uvicorn model_serving.app:app --host 127.0.0.1 --port 8000
 
 # Start with GPU 1 only
 $env:CUDA_VISIBLE_DEVICES="1" 
-uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+uvicorn model_serving.app:app --host 127.0.0.1 --port 8000
 
 # Start in CPU mode
-$env:GEMMA_FORCE_CPU="1"
-uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+$env:MODEL_FORCE_CPU="1"
+uvicorn model_serving.app:app --host 127.0.0.1 --port 8000
 ```
 
 ## Moving to Another PC - Checklist
@@ -167,9 +167,9 @@ $env:CUDA_VISIBLE_DEVICES="0"  # Usually the RTX 4090
 The system respects this priority order:
 
 1. **CUDA_VISIBLE_DEVICES** environment variable (highest priority)
-2. **GEMMA_FORCE_CPU** environment variable
-3. **GEMMA_GPU_ID** environment variable  
-4. **GEMMA_DEVICE_MAP** environment variable
+2. **MODEL_FORCE_CPU** environment variable
+3. **MODEL_GPU_ID** environment variable  
+4. **MODEL_DEVICE_MAP** environment variable
 5. **Auto detection** (lowest priority)
 
 ## Environment Variables Reference
@@ -177,26 +177,26 @@ The system respects this priority order:
 | Variable | Purpose | Valid Values | Default | Example |
 |----------|---------|--------------|---------|---------|
 | `CUDA_VISIBLE_DEVICES` | Controls which GPUs PyTorch can see | `"0"`, `"1"`, `"0,1"`, `""` (empty=CPU only) | All GPUs | `"1"` |
-| `GEMMA_FORCE_CPU` | Forces CPU-only mode, ignoring GPUs | `"0"`, `"1"`, `"true"`, `"false"` | `"0"` | `"1"` |
-| `GEMMA_GPU_ID` | Use specific GPU by ID | `"0"`, `"1"`, `"2"`, etc. or empty | Empty (auto) | `"1"` |
-| `GEMMA_DEVICE_MAP` | Device mapping strategy | `"auto"`, `"cpu"`, custom mapping | `"auto"` | `"cpu"` |
-| `GEMMA_QUANTIZE_4BIT` | Enable 4-bit quantization to save VRAM | `"0"`, `"1"`, `"true"`, `"false"` | `"0"` | `"1"` |
+| `MODEL_FORCE_CPU` | Forces CPU-only mode, ignoring GPUs | `"0"`, `"1"`, `"true"`, `"false"` | `"0"` | `"1"` |
+| `MODEL_GPU_ID` | Use specific GPU by ID | `"0"`, `"1"`, `"2"`, etc. or empty | Empty (auto) | `"1"` |
+| `MODEL_DEVICE_MAP` | Device mapping strategy | `"auto"`, `"cpu"`, custom mapping | `"auto"` | `"cpu"` |
+| `MODEL_QUANTIZE_4BIT` | Enable 4-bit quantization to save VRAM | `"0"`, `"1"`, `"true"`, `"false"` | `"0"` | `"1"` |
 
 ### Variable Interactions:
 - If `CUDA_VISIBLE_DEVICES=""` → Only CPU available, other GPU settings ignored
-- If `GEMMA_FORCE_CPU="1"` → CPU mode forced, GPU settings ignored  
-- If `GEMMA_GPU_ID="1"` → Use GPU 1 specifically (if visible)
-- If `GEMMA_QUANTIZE_4BIT="1"` → Reduce memory usage ~4× with small quality loss
+- If `MODEL_FORCE_CPU="1"` → CPU mode forced, GPU settings ignored  
+- If `MODEL_GPU_ID="1"` → Use GPU 1 specifically (if visible)
+- If `MODEL_QUANTIZE_4BIT="1"` → Reduce memory usage ~4× with small quality loss
 
 ## Troubleshooting
 
 ### Problem: "CUDA out of memory"
 ```powershell
 # Try 4-bit quantization to reduce memory usage
-$env:GEMMA_QUANTIZE_4BIT="1"
+$env:MODEL_QUANTIZE_4BIT="1"
 
 # Or force CPU mode
-$env:GEMMA_FORCE_CPU="1"
+$env:MODEL_FORCE_CPU="1"
 ```
 
 ### Problem: Wrong GPU selected
@@ -214,7 +214,7 @@ $env:CUDA_VISIBLE_DEVICES="1"  # Change to your target GPU number
 python -c "import torch; print('CUDA Available:', torch.cuda.is_available())"
 
 # Check you're not forcing CPU mode
-Remove-Item Env:GEMMA_FORCE_CPU -ErrorAction SilentlyContinue
+Remove-Item Env:MODEL_FORCE_CPU -ErrorAction SilentlyContinue
 Remove-Item Env:CUDA_VISIBLE_DEVICES -ErrorAction SilentlyContinue
 ```
 
@@ -229,7 +229,7 @@ param(
 )
 
 if ($ForceCpu) {
-    $env:GEMMA_FORCE_CPU = "1"
+    $env:MODEL_FORCE_CPU = "1"
     Write-Host "🔧 Forcing CPU mode" -ForegroundColor Yellow
 } else {
     $env:CUDA_VISIBLE_DEVICES = $GpuId
@@ -237,12 +237,12 @@ if ($ForceCpu) {
 }
 
 if ($Quantize) {
-    $env:GEMMA_QUANTIZE_4BIT = "1"
+    $env:MODEL_QUANTIZE_4BIT = "1"
     Write-Host "🔧 Enabling 4-bit quantization" -ForegroundColor Blue
 }
 
 # Start the server
-uvicorn gemma_serving.app:app --host 0.0.0.0 --port 8000
+uvicorn model_serving.app:app --host 0.0.0.0 --port 8000
 ```
 
 Usage:

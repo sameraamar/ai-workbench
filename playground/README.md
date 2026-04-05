@@ -104,4 +104,4 @@ pip install -r playground/requirements.txt
 - The **Transformers demos** need `torch` and `transformers`.
 - The **vLLM scripts** need `vllm` (Linux/WSL2 only) and `requests`.
 - The **load testing scripts** need `aiohttp`.
-- The legacy scripts optionally depend on the `gemma_serving` package from `model-serving/`.
+- The legacy scripts optionally depend on the `model_serving` package from `model-serving/`.

@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from gemma_sandbox.config import AppConfig
-from gemma_sandbox.domain import RunResult
+from ai_sandbox.config import AppConfig
+from ai_sandbox.domain import RunResult
 
 from .serving_client import ServingClient
 

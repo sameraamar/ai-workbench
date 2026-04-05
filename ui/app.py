@@ -11,18 +11,20 @@ from env_bootstrap import bootstrap_environment
 bootstrap_environment()
 
 import streamlit as st
+from streamlit.components.v1 import html as _components_html
 
 ROOT = Path(__file__).resolve().parent
 SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from gemma_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, SERVING_URL
-from gemma_sandbox.domain import RunResult
-from gemma_sandbox.media import extract_video_frames, persist_upload
-from gemma_sandbox.model_profiles import MODEL_LABELS, get_capabilities, get_label_for_model_id, get_model_id, model_labels_for_backend
-from gemma_sandbox.services.sandbox_service import SandboxService, TurnAttachment
-from gemma_sandbox.services.serving_client import ServingClient
+from ai_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, SERVING_URL
+from ai_sandbox.domain import RunResult
+from ai_sandbox.media import extract_video_frames, persist_upload
+from ai_sandbox.model_profiles import MODEL_LABELS, get_capabilities, get_label_for_model_id, get_model_id, model_labels_for_backend
+from ai_sandbox.services.sandbox_service import SandboxService, TurnAttachment
+from ai_sandbox.services.serving_client import _ensure_data_uri_or_url
+from ai_sandbox.services.serving_client import ServingClient
 
 try:
     from streamlit_paste_button import paste_image_button as _paste_image_button
@@ -39,7 +41,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 st.set_page_config(
-    page_title="AI Sandbox Arena",
+    page_title="AI Workbench",
     page_icon="AI",
     layout="wide",
 )
@@ -111,6 +113,42 @@ def inject_styles() -> None:
             vertical-align: middle;
             line-height: 1;
             color: #6b84a0;
+        }
+        /* Chat window: scrollable history area */
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            border: 1px solid rgba(60, 80, 110, 0.10) !important;
+            border-radius: 16px !important;
+            background: rgba(255, 255, 255, 0.50) !important;
+            padding: 0.25rem 0.25rem !important;
+        }
+        /* Media attachment tabs — compact */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.25rem;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 0.25rem 0.65rem;
+            font-size: 0.82rem;
+        }
+        /* Chat input area: subtle top separator */
+        .chat-input-area {
+            margin-top: 0.4rem;
+            padding-top: 0.35rem;
+            border-top: 1px solid rgba(60, 80, 110, 0.10);
+        }
+        /* Code blocks: horizontal scroll by default */
+        pre {
+            overflow-x: auto !important;
+            max-width: 100% !important;
+        }
+        /* When wrap mode is active, switch to word-wrapping */
+        .wrap-code-blocks pre {
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+            overflow-x: visible !important;
+        }
+        .wrap-code-blocks pre code {
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
         }
         </style>
         """,
@@ -191,6 +229,81 @@ def _model_family_label(label: str) -> str:
     return label.split("(")[0].strip()
 
 
+def _render_run_history(ui_history: list[dict]) -> None:
+    """Render per-turn run summaries in the right panel.
+
+    Each turn shows as a collapsed expander except the last one, which is
+    expanded so the user can see the most-recent result immediately.
+    """
+    turns = [
+        (i, msg)
+        for i, msg in enumerate(ui_history)
+        if msg.get("role") == "assistant" and msg.get("run_summary")
+    ]
+    if not turns:
+        st.caption("Run metrics will appear here after the first response.")
+        return
+
+    for list_idx, (history_idx, msg) in enumerate(turns):
+        s = msg["run_summary"]
+        is_last = list_idx == len(turns) - 1
+        turn_num = list_idx + 1
+        elapsed = s.get("response_time_seconds")
+        tps = s.get("output_tokens_per_second")
+        # Brief label: Turn N · Xs · N tok/s
+        label_parts = [f"Turn {turn_num}"]
+        if elapsed is not None:
+            label_parts.append(f"{elapsed:.2f}s")
+        if tps is not None:
+            label_parts.append(f"{tps:.1f} tok/s")
+        label = " · ".join(label_parts)
+
+        with st.expander(label, expanded=is_last):
+            # Token counts
+            token_parts: list[str] = []
+            if s.get("input_token_count") is not None:
+                token_parts.append(f"In: **{s['input_token_count']}**")
+            if s.get("output_token_count") is not None:
+                token_parts.append(f"Out: **{s['output_token_count']}**")
+            if s.get("total_token_count") is not None:
+                token_parts.append(f"Total: **{s['total_token_count']}**")
+            if token_parts:
+                st.markdown("  ".join(token_parts))
+            # Timing row
+            timing_parts: list[str] = []
+            timings = s.get("timings", {})
+            if isinstance(timings.get("runtime_load_seconds"), (int, float)):
+                timing_parts.append(f"Load: {timings['runtime_load_seconds']:.2f}s")
+            if isinstance(timings.get("generation_seconds"), (int, float)):
+                timing_parts.append(f"Gen: {timings['generation_seconds']:.2f}s")
+            if isinstance(timings.get("decode_seconds"), (int, float)):
+                timing_parts.append(f"Decode: {timings['decode_seconds']:.2f}s")
+            if timing_parts:
+                st.caption(" | ".join(timing_parts))
+            # Memory
+            memory = s.get("memory", {})
+            mem_parts: list[str] = []
+            if isinstance(memory.get("process_rss_delta_mb"), (int, float)):
+                mem_parts.append(f"RAM Δ: {memory['process_rss_delta_mb']:.1f} MB")
+            if isinstance(memory.get("cuda_peak_allocated_mb"), (int, float)):
+                mem_parts.append(f"Peak VRAM: {memory['cuda_peak_allocated_mb']:.1f} MB")
+            if mem_parts:
+                st.caption(" | ".join(mem_parts))
+            # Misc flags
+            misc: list[str] = []
+            if s.get("runtime_state") == "cold-start":
+                misc.append("❄️ cold-start")
+            if s.get("support_level"):
+                misc.append(f"support: {s['support_level']}")
+            if s.get("uploaded_file"):
+                misc.append(f"file: {s['uploaded_file']}")
+            if misc:
+                st.caption("  ·  ".join(misc))
+            # Raw JSON in nested expander
+            with st.expander("Full metadata", expanded=False):
+                st.json(s)
+
+
 def main() -> None:
     inject_styles()
 
@@ -256,6 +369,7 @@ def main() -> None:
         max_new_tokens = st.slider("Max new tokens", min_value=64, max_value=2048, value=256, step=64)
         enable_thinking = st.toggle("Enable thinking", value=False)
         stream_output = st.checkbox("Stream text response to UI", value=True)
+        wrap_code = st.checkbox("Wrap code blocks", value=False, help="Toggle word-wrap on code blocks. Off = horizontal scroll.")
         st.caption(f"Active model: {_active_model or model_id}")
         st.caption(f"Backend: {'Native (Transformers)' if _is_native_backend else 'vLLM'} · {SERVING_URL}")
         st.caption("Standardized sampling defaults are locked to temperature=1.0, top_p=0.95, top_k=64.")
@@ -273,7 +387,7 @@ def main() -> None:
     _media_note = "Attach images" + (", audio," if _effective_caps.audio else "") + (" video," if _effective_caps.video else "") + " or other media to any message. Responses are always text."
     st.markdown('<div class="hero">', unsafe_allow_html=True)
     st.markdown(f'<div class="mono-label">{_family} Sandbox</div>', unsafe_allow_html=True)
-    st.title("AI Sandbox Arena")
+    st.title("AI Workbench")
     st.write(_media_note)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -306,27 +420,43 @@ def main() -> None:
     left, right = st.columns([1.2, 0.8])
 
     with left:
-        st.markdown('<div class="support-chip">Native</div>', unsafe_allow_html=True)
-
         active_conversation_key = _conversation_key(
             model_id=model_id,
             system_prompt=system_prompt,
         )
         model_history, ui_history = _get_history_for_key(active_conversation_key)
-        conversation_history_slot = st.empty()
 
-        left_controls = st.columns([0.7, 0.3])
-        with left_controls[0]:
-            turn_counter_slot = st.empty()
-            turn_counter_slot.caption(f"Conversation turns: {len(ui_history) // 2}")
-        with left_controls[1]:
-            if st.button("Clear conversation", use_container_width=True):
+        # ---- Chat header: chip + turn counter + clear button ----
+        _hdr_chip, _hdr_turns, _hdr_clear = st.columns([0.32, 0.42, 0.26])
+        with _hdr_chip:
+            st.markdown('<div class="support-chip">Native</div>', unsafe_allow_html=True)
+        _turn_counter_slot = _hdr_turns.empty()
+        _turn_counter_slot.caption(f"Conversation turns: {len(ui_history) // 2}")
+        with _hdr_clear:
+            if st.button("Clear", use_container_width=True, key="clear_conv_btn"):
                 _clear_history_for_key(active_conversation_key)
                 model_history, ui_history = _get_history_for_key(active_conversation_key)
-        with conversation_history_slot.container():
-            _render_conversation_history(ui_history)
+                st.rerun()
 
-        pending_exchange_slot = st.empty()
+        # ---- Scrollable chat history window ----
+        _chat_window = st.container(height=500, border=False)
+        with _chat_window:
+            _render_conversation_history(ui_history)
+            pending_exchange_slot = st.empty()
+
+        # Auto-scroll to the latest message
+        _components_html(
+            """<script>
+(function() {
+    var candidates = window.parent.document.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"]');
+    if (candidates.length > 0) {
+        var el = candidates[0];
+        el.scrollTop = el.scrollHeight;
+    }
+})();
+</script>""",
+            height=0,
+        )
 
         _generating = st.session_state.get("_generating", False)
         _input_key = st.session_state.get("_uploader_key", 0)
@@ -423,25 +553,26 @@ def main() -> None:
 
 
     with right:
-        st.subheader("Model Capabilities")
-        # When mismatch, show the *server's* actual model capabilities.
-        _display_label = (_active_label or selected_model_label) if _model_mismatch else selected_model_label
-        _display_caps = get_capabilities(_display_label)
-        st.markdown(f"**{_display_label}**")
-        for _cap_label, _supported in [("🖼️ Images", _display_caps.image), ("🔊 Audio", _display_caps.audio), ("🎬 Video", _display_caps.video)]:
-            st.markdown(f"{'✅' if _supported else '❌'} {_cap_label}")
-        if _model_ready:
-            st.success(f"Runtime: **{_active_model or model_id}** loaded and ready.")
-        elif _server_healthy:
-            st.info("Runtime: server is up, waiting for model info.")
-        else:
-            st.warning(
-                f"Runtime: cannot reach backend at {SERVING_URL}. "
-                f"Start the server with `vllm-serving/start_vllm.ps1` (WSL2) or `start_server.ps1` (Windows)."
-            )
-        st.caption(
-            "The app now reports progress stages in both the server logs and the UI: runtime check, processor load, model load, input prep, generation, and decoding."
-        )
+        # ---- Model Capabilities (compact) ----
+        with st.expander("Model Capabilities", expanded=True):
+            _display_label = (_active_label or selected_model_label) if _model_mismatch else selected_model_label
+            _display_caps = get_capabilities(_display_label)
+            st.markdown(f"**{_display_label}**")
+            for _cap_label, _supported in [("🖼️ Images", _display_caps.image), ("🔊 Audio", _display_caps.audio), ("🎬 Video", _display_caps.video)]:
+                st.markdown(f"{'✅' if _supported else '❌'} {_cap_label}")
+            if _model_ready:
+                st.success(f"**{_active_model or model_id}** ready", icon="✅")
+            elif _server_healthy:
+                st.info("Server up, waiting for model info.")
+            else:
+                st.warning(
+                    f"Cannot reach backend at {SERVING_URL}. "
+                    f"Start with `vllm-serving/start_vllm.ps1` (WSL2) or `start_server.ps1` (Windows)."
+                )
+
+        # ---- Per-turn run metrics ----
+        st.markdown("**Run History**")
+        _render_run_history(ui_history)
 
     if not run_clicked:
         return
@@ -464,9 +595,20 @@ def main() -> None:
         run_progress.progress(min(max(progress_value, 0.0), 1.0), text=message)
 
     emit_progress("start", 0.02, "Preparing request...")
+    LOGGER.info(
+        "TURN_DIAG: pending uploaded_path=%r, uploaded_name=%r, image_urls=%r, pasted=%r",
+        pending.get("uploaded_path"), pending.get("uploaded_name"),
+        pending.get("image_urls"), pending.get("pasted_image_path"),
+    )
     if _pending_uploaded_path is not None and _pending_uploaded_name is not None:
         ext = Path(_pending_uploaded_name).suffix.lower()
         label = _pending_uploaded_name
+        LOGGER.info(
+            "TURN_DIAG: uploaded file=%s ext=%s exists=%s size=%s",
+            _pending_uploaded_path, ext,
+            _pending_uploaded_path.exists(),
+            _pending_uploaded_path.stat().st_size if _pending_uploaded_path.exists() else 'N/A',
+        )
         if ext in _IMAGE_EXTS:
             attachment.image_paths.append(_pending_uploaded_path)
             attachment_labels.append(f"image: {label}")
@@ -505,6 +647,12 @@ def main() -> None:
 
     started_at = perf_counter()
 
+    LOGGER.info(
+        "TURN_DIAG: attachment image_paths=%r, image_urls=%r, prior_turns=%d",
+        [str(p) for p in attachment.image_paths],
+        attachment.image_urls,
+        len(model_history),
+    )
     try:
         result = sandbox.run(
             user_prompt=user_prompt,
@@ -518,119 +666,58 @@ def main() -> None:
         live_response_placeholder.empty()
 
         # Append the current turn to both histories.
-        # model_history receives full content parts (including media) for the next request.
+        # model_history stores data URIs (not file paths) so prior-turn images
+        # survive across Streamlit reruns and temp-file cleanup.
         # ui_history receives display-only data for rendering the thread.
         user_content: list[dict] = []
         for path in attachment.image_paths:
-            user_content.append({"type": "image", "url": path.as_posix()})
+            user_content.append({"type": "image", "url": _ensure_data_uri_or_url(path.as_posix())})
         for url in attachment.image_urls:
-            user_content.append({"type": "image", "url": url})
+            user_content.append({"type": "image", "url": _ensure_data_uri_or_url(url)})
         if attachment.audio_path is not None:
             user_content.append({"type": "audio", "audio": attachment.audio_path.as_posix()})
         for path in attachment.video_frame_paths:
-            user_content.append({"type": "image", "url": path.as_posix()})
+            user_content.append({"type": "image", "url": _ensure_data_uri_or_url(path.as_posix())})
         user_content.append({"type": "text", "text": result.prompt_used})
-        model_history.append({"role": "user", "content": user_content})
-        model_history.append({"role": "assistant", "content": [{"type": "text", "text": result.response_text}]})
-        ui_history.append({"role": "user", "text": user_prompt, "attachment_labels": attachment_labels})
-        ui_history.append({"role": "assistant", "text": result.response_text})
-        st.session_state["_generating"] = False
-        st.session_state.pop("_pending_turn", None)
-        st.rerun()
-
-        st.subheader("Result")
-        st.caption(f"Support level: {result.support_level}")
-        st.caption(f"Response time: {elapsed_seconds:.2f} seconds")
+        # Build the run summary to persist in session state before the rerun.
         metadata = result.run_metadata
         timings = metadata.get("timings", {}) if isinstance(metadata.get("timings"), dict) else {}
         memory = metadata.get("memory", {}) if isinstance(metadata.get("memory"), dict) else {}
-        prompt_char_count = metadata.get("prompt_char_count")
-        response_char_count = metadata.get("response_char_count")
-        generation_tokens_per_second = metadata.get("output_tokens_per_second")
         tokens_per_second = _calculate_tokens_per_second(result.output_token_count, elapsed_seconds)
-        token_parts: list[str] = []
-        if result.input_token_count is not None:
-            token_parts.append(f"Input tokens: {result.input_token_count}")
-        if result.output_token_count is not None:
-            token_parts.append(f"Output tokens: {result.output_token_count}")
-        if result.total_token_count is not None:
-            token_parts.append(f"Total tokens: {result.total_token_count}")
-        if tokens_per_second is not None:
-            token_parts.append(f"Output tok/s: {tokens_per_second:.2f}")
-        if token_parts:
-            st.caption(" | ".join(token_parts))
-        char_parts: list[str] = []
-        if isinstance(prompt_char_count, int):
-            char_parts.append(f"Prompt chars: {prompt_char_count}")
-        if isinstance(response_char_count, int):
-            char_parts.append(f"Response chars: {response_char_count}")
-        if char_parts:
-            st.caption(" | ".join(char_parts))
-        timing_parts: list[str] = []
-        runtime_load_seconds = timings.get("runtime_load_seconds")
-        generation_seconds = timings.get("generation_seconds")
-        decode_seconds = timings.get("decode_seconds")
-        if isinstance(runtime_load_seconds, (int, float)):
-            timing_parts.append(f"Load: {runtime_load_seconds:.2f}s")
-        if isinstance(generation_seconds, (int, float)):
-            timing_parts.append(f"Generate: {generation_seconds:.2f}s")
-        if isinstance(decode_seconds, (int, float)):
-            timing_parts.append(f"Decode: {decode_seconds:.2f}s")
-        if isinstance(generation_tokens_per_second, (int, float)):
-            timing_parts.append(f"Gen tok/s: {generation_tokens_per_second:.2f}")
-        if timing_parts:
-            st.caption(" | ".join(timing_parts))
-        memory_parts: list[str] = []
-        process_rss_delta_mb = memory.get("process_rss_delta_mb")
-        if isinstance(process_rss_delta_mb, (int, float)):
-            memory_parts.append(f"RAM delta: {process_rss_delta_mb:.2f} MB")
-        cuda_peak_allocated_mb = memory.get("cuda_peak_allocated_mb")
-        if isinstance(cuda_peak_allocated_mb, (int, float)):
-            memory_parts.append(f"Peak VRAM: {cuda_peak_allocated_mb:.2f} MB")
-        if memory_parts:
-            st.caption(" | ".join(memory_parts))
-        st.caption("The full response is shown inline next to the prompt or in the conversation thread above.")
+        _run_summary = {
+            "model_id": result.model_id,
+            "runtime_state": "cold-start" if result.was_cold_start else "warm-start",
+            "response_time_seconds": round(elapsed_seconds, 3),
+            "output_tokens_per_second": round(tokens_per_second, 3) if tokens_per_second is not None else None,
+            "input_token_count": result.input_token_count,
+            "output_token_count": result.output_token_count,
+            "total_token_count": result.total_token_count,
+            "prompt_char_count": metadata.get("prompt_char_count"),
+            "response_char_count": metadata.get("response_char_count"),
+            "timings": timings,
+            "generation_output_tokens_per_second": metadata.get("output_tokens_per_second"),
+            "memory": memory,
+            "support_level": result.support_level,
+            "system_prompt": system_prompt,
+            "conversation_turn_count": len(ui_history) // 2 + 1,
+            "enable_thinking": enable_thinking,
+            "stream_output": stream_output,
+            "max_new_tokens": max_new_tokens,
+            "temperature": config.generation.temperature,
+            "top_p": config.generation.top_p,
+            "top_k": config.generation.top_k,
+            "uploaded_file": _pending_uploaded_name,
+            "sampled_frame_count": len(frame_paths),
+            "prompt_used": result.prompt_used,
+        }
 
-        with st.expander("Run metadata"):
-            st.json(
-                {
-                    "model_id": result.model_id,
-                    "runtime_state": "cold-start" if result.was_cold_start else "warm-start",
-                    "response_time_seconds": round(elapsed_seconds, 3),
-                    "output_tokens_per_second": round(tokens_per_second, 3) if tokens_per_second is not None else None,
-                    "input_token_count": result.input_token_count,
-                    "output_token_count": result.output_token_count,
-                    "total_token_count": result.total_token_count,
-                    "prompt_char_count": prompt_char_count,
-                    "response_char_count": response_char_count,
-                    "runtime_load_seconds": timings.get("runtime_load_seconds"),
-                    "prepare_seconds": timings.get("prepare_seconds"),
-                    "generation_seconds": timings.get("generation_seconds"),
-                    "decode_seconds": timings.get("decode_seconds"),
-                    "service_seconds": timings.get("service_seconds"),
-                    "generation_output_tokens_per_second": generation_tokens_per_second,
-                    "memory": memory,
-                    "support_level": result.support_level,
-                    "system_prompt": system_prompt,
-                    "conversation_turn_count": len(ui_history) // 2,
-                    "enable_thinking": enable_thinking,
-                    "stream_output": stream_output,
-                    "max_new_tokens": max_new_tokens,
-                    "temperature": config.generation.temperature,
-                    "top_p": config.generation.top_p,
-                    "top_k": config.generation.top_k,
-                    "uploaded_file": _pending_uploaded_name,
-                    "sampled_frame_count": len(frame_paths),
-                }
-            )
-
-        with st.expander("Prompt used"):
-            st.code(result.prompt_used)
-
-        if frame_paths:
-            with st.expander("Sampled frames"):
-                st.write(f"Extracted {len(frame_paths)} frames for analysis.")
-                st.image([str(path) for path in frame_paths], use_container_width=True)
+        model_history.append({"role": "user", "content": user_content})
+        model_history.append({"role": "assistant", "content": [{"type": "text", "text": result.response_text}]})
+        ui_history.append({"role": "user", "text": user_prompt, "attachment_labels": attachment_labels})
+        ui_history.append({"role": "assistant", "text": result.response_text, "run_summary": _run_summary})
+        st.session_state["_generating"] = False
+        st.session_state.pop("_pending_turn", None)
+        st.rerun()
     except Exception as error:
         run_status.update(label="Sandbox run failed.", state="error", expanded=True)
         live_response_placeholder.empty()

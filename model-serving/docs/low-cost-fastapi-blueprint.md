@@ -1,6 +1,6 @@
 # Purpose
 
-This document describes a concrete low-cost FastAPI serving blueprint for the Gemma serving research package.
+This document describes a concrete low-cost FastAPI serving blueprint for the model serving package.
 It exists so future implementation work can start from a minimal, defensible serving shape rather than redesigning the same constraints repeatedly.
 AI agents and humans should update this document when the blueprint changes or measured results invalidate its assumptions.
 
@@ -8,12 +8,12 @@ AI agents and humans should update this document when the blueprint changes or m
 
 Update this file when the serving topology, API surface, caching strategy, or queueing assumptions change.
 Humans or AI may update it.
-Keep this aligned with the code in `src/gemma_serving_research/low_cost_fastapi.py`.
-The real Gemma gateway implementation lives in `src/gemma_serving_research/gemma_gateway.py`.
+Keep this aligned with the code in `src/model_serving/low_cost_fastapi.py`.
+The real model gateway implementation lives in `src/model_serving/gateway.py`.
 
 ## Scope
 
-This blueprint targets the cheapest practical FastAPI shape for Gemma-backed listing rewrite and optional image attribute extraction.
+This blueprint targets the cheapest practical FastAPI shape for model-backed listing rewrite and optional image attribute extraction.
 
 It deliberately favors:
 
@@ -33,11 +33,11 @@ It deliberately does not try to solve:
 
 ## Code Location
 
-- FastAPI blueprint: `src/gemma_serving_research/low_cost_fastapi.py`
-- Real Gemma gateway: `src/gemma_serving_research/gemma_gateway.py`
-- Planning helpers: `src/gemma_serving_research/planning.py`
-- Concurrency simulation: `src/gemma_serving_research/concurrency_simulation.py`
-- Benchmark harness: `src/gemma_serving_research/benchmark_runner.py`
+- FastAPI blueprint: `src/model_serving/low_cost_fastapi.py`
+- Real model gateway: `src/model_serving/gateway.py`
+- Planning helpers: `src/model_serving/planning/planning.py`
+- Concurrency simulation: `src/model_serving/planning/simulation.py`
+- Benchmark harness: `src/model_serving/planning/benchmarking.py`
 
 ## Why This Shape Fits Low Cost
 
@@ -94,7 +94,7 @@ Returns the current job state:
 
 When the low-cost blueprint stops being sufficient, upgrade in this order:
 
-1. Replace the stub gateway with a real Gemma-backed gateway.
+1. Replace the stub gateway with a real model-backed gateway.
 2. Move from in-memory cache to Redis if repeated work becomes important across restarts.
 3. Move from in-memory queue to a durable queue if job loss on restart becomes unacceptable.
 4. Add more workers or a second host only after benchmark evidence shows queue delay is the actual bottleneck.
@@ -105,13 +105,13 @@ When the low-cost blueprint stops being sufficient, upgrade in this order:
 Example local run command:
 
 ```bash
-uvicorn gemma_serving_research.low_cost_fastapi:app --host 127.0.0.1 --port 8000
+uvicorn model_serving.app:app --host 127.0.0.1 --port 8000
 ```
 
 ## Next Code Step
 
 The blueprint currently uses a stub gateway for safe local verification.
-The next integration step is to add a real gateway that wraps Gemma inference while preserving the same API contract.
+The next integration step is to add a real gateway that wraps model inference while preserving the same API contract.
 
-That real gateway now exists and can be enabled by setting `GEMMA_FASTAPI_GATEWAY=gemma` in `.env` or the process environment.
+That real gateway now exists and can be enabled by setting `MODEL_GATEWAY=model` in `.env` or the process environment.
 The stub path remains the default because it is safer for local smoke tests and documentation demos.

@@ -1,5 +1,5 @@
 """Tests for model_profiles.py (replaces legacy persona-preset tests)."""
-from gemma_sandbox.model_profiles import (
+from ai_sandbox.model_profiles import (
     DISABLED_LABELS,
     MODEL_LABELS,
     MODEL_PROFILES,

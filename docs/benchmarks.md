@@ -22,7 +22,7 @@ Executes benchmark scenarios sequentially with precise timing measurement.
 **Usage:**
 ```bash
 cd playground
-python benchmark_runner.py ../real-benchmark-scenarios.json --target gemma_serving.benchmark_targets:benchmark_listing_rewrite
+python benchmark_runner.py ../real-benchmark-scenarios.json --target model_serving.planning.benchmark_targets:benchmark_listing_rewrite
 ```
 
 **Features:**
@@ -298,7 +298,7 @@ pip install aiohttp>=3.9.0
 
 ```bash
 cd model-serving
-PYTHONPATH=src uvicorn gemma_serving.app:app --host 127.0.0.1 --port 8000
+PYTHONPATH=src uvicorn model_serving.app:app --host 127.0.0.1 --port 8000
 ```
 
 ### Quick Performance Validation

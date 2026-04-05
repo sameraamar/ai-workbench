@@ -10,7 +10,7 @@ if __package__ in {None, ""}:
     MODEL_SERVING_SRC = PACKAGE_ROOT / "model-serving" / "src"
     if str(MODEL_SERVING_SRC) not in sys.path:
         sys.path.insert(0, str(MODEL_SERVING_SRC))
-    from gemma_serving.simulation import simulate_capacity
+    from model_serving.planning.simulation import simulate_capacity
 else:
     from .simulation import simulate_capacity
 

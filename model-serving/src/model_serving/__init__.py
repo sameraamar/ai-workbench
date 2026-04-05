@@ -11,7 +11,6 @@ from .planning import (
 
 __all__ = [
     "GenerationSettings",
-    "GemmaLowCostGateway",  # backward-compat alias
     "LowCostServingConfig",
     "MODEL_PROFILES",
     "ModelGateway",
@@ -29,7 +28,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name in ("GemmaLowCostGateway", "ModelGateway"):
+    if name == "ModelGateway":
         from .gateway import ModelGateway
 
         return ModelGateway

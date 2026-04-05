@@ -25,11 +25,9 @@ class ModelGateway:
         self,
         config: ServingConfig | None = None,
         model_service: ModelService | None = None,
-        # Backward-compat kwarg
-        gemma_service: ModelService | None = None,
     ) -> None:
         self._config = config or ServingConfig()
-        svc = model_service or gemma_service
+        svc = model_service
         if svc is not None:
             self._model = svc
         else:
@@ -93,16 +91,9 @@ class ModelGateway:
         }
 
 
-# Backward-compat alias
-GemmaLowCostGateway = ModelGateway
-
-
 def build_gateway_from_env() -> ModelGateway | None:
-    gateway_mode = (
-        os.getenv("MODEL_GATEWAY")
-        or os.getenv("GEMMA_FASTAPI_GATEWAY", "stub")
-    ).strip().lower()
-    if gateway_mode in ("gemma", "model", "real"):
+    gateway_mode = os.getenv("MODEL_GATEWAY", "stub").strip().lower()
+    if gateway_mode in ("model", "real"):
         return ModelGateway()
     return None
 

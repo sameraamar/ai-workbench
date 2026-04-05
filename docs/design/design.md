@@ -82,7 +82,7 @@ Some persona details are still To Be Discovered.
 
 - Be honest about capability boundaries.
 - Keep the starter implementation easy to run locally.
-- Keep the code modular enough to reuse the Gemma service in another project.
+- Keep the code modular enough to reuse the model service in another project.
 - Prefer small, reviewable changes.
 
 ## Architecture
@@ -111,7 +111,7 @@ ai-sandbox/
 │   ├── tests/              # Unit tests
 │   └── requirements.txt
 ├── ui/                     # Streamlit frontend — no model weights, calls vLLM over HTTP
-│   ├── src/gemma_sandbox/  # Python package
+│   ├── src/ai_sandbox/  # Python package
 │   │   ├── services/
 │   │   │   ├── serving_client.py  # httpx client calling /v1/chat/completions (OpenAI API)
 │   │   │   └── sandbox_service.py # Sandbox orchestration
@@ -150,7 +150,7 @@ ai-sandbox/
 2. Model-serving layer (`model-serving/`)
    - Windows-native Transformers-based inference with OpenAI shim
    - `planning/` subpackage contains capacity planning, benchmarking, and simulation utilities
-   - The old Transformers-based `gemma_serving/` package name was renamed to `model_serving` (see ADR-0002)
+   - The old Transformers-based package was renamed from `gemma_serving` to `model_serving` (see ADR-0002)
 
 2. Streamlit UI layer (`ui/`)
    - Collects output mode, prompt, and optional media attachment per turn
@@ -164,13 +164,13 @@ ai-sandbox/
    - Renders assistant replies inline with the prompt or chat thread
    - Shows runtime status, progress, and run metadata
 
-3. Sandbox orchestration layer (`ui/src/gemma_sandbox/services/sandbox_service.py`)
+3. Sandbox orchestration layer (`ui/src/ai_sandbox/services/sandbox_service.py`)
    - Maps abilities to native or simulated workflows
    - Builds prompts and message payloads
    - Applies capability labeling
    - Delegates inference to `ServingClient`
 
-4. Media utilities layer (`ui/src/gemma_sandbox/media.py`)
+4. Media utilities layer (`ui/src/ai_sandbox/media.py`)
    - Stores uploads temporarily
    - Extracts representative video frames for analysis
 
@@ -302,6 +302,6 @@ cd ui
 $env:PYTHONPATH="src"; streamlit run app.py
 ```
 
-The UI connects to `http://localhost:8000` by default (configurable via `SERVING_URL` in `ui/.env`).
+The UI connects to `http://localhost:8000` by default (configurable via `MODEL_SERVING_URL` in `ui/.env`).
 
 Serving research for potential multi-user deployment, including model tradeoffs, concurrency assumptions, and cost planning, is tracked in [docs/research/gemma4-serving-evaluation.md](../research/gemma4-serving-evaluation.md).

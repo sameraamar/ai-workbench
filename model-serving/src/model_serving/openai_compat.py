@@ -252,14 +252,19 @@ def register_openai_routes(
                 collected_text = partial
 
             result_holder: list[dict[str, Any]] = []
+            error_holder: list[Exception] = []
 
             def _worker():
-                r = service.generate(
-                    internal_messages,
-                    settings,
-                    token_callback=_token_cb,
-                )
-                result_holder.append(r)
+                try:
+                    r = service.generate(
+                        internal_messages,
+                        settings,
+                        token_callback=_token_cb,
+                    )
+                    result_holder.append(r)
+                except Exception as exc:
+                    LOGGER.error("SSE worker error: %s", exc, exc_info=True)
+                    error_holder.append(exc)
 
             worker = Thread(target=_worker, daemon=True)
             worker.start()
@@ -273,12 +278,36 @@ def register_openai_routes(
                         _stream_delta_chunk(model_id, delta)
                     )
 
-            # Flush any remaining text
+            # Surface worker errors as an SSE error event so the client
+            # doesn't silently receive an empty response.
+            if error_holder:
+                err_msg = str(error_holder[0])
+                yield _sse_chunk(
+                    _stream_delta_chunk(model_id, f"[Error: {err_msg}]")
+                )
+                yield _sse_chunk(
+                    _stream_delta_chunk(model_id, "", finish_reason="stop")
+                )
+                yield "data: [DONE]\n\n"
+                return
+
+            # Flush any remaining text from streaming token callback
             if len(collected_text) > prev_len:
                 delta = collected_text[prev_len:]
+                prev_len = len(collected_text)
                 yield _sse_chunk(
                     _stream_delta_chunk(model_id, delta)
                 )
+
+            # Multimodal one-shot fallback: _generate_multimodal does not
+            # call token_callback, so the result text lives only in
+            # result_holder.  Emit anything not already streamed.
+            if result_holder:
+                full_text = result_holder[0].get("text", "")
+                if len(full_text) > prev_len:
+                    yield _sse_chunk(
+                        _stream_delta_chunk(model_id, full_text[prev_len:])
+                    )
 
             # Finish chunk
             yield _sse_chunk(

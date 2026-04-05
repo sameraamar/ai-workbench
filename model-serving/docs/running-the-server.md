@@ -46,7 +46,7 @@ cd model-serving
 
 ### Notes
 
-- `flash-attn` has no prebuilt Windows wheels. `GEMMA_FLASH_ATTENTION=1` silently falls
+- `flash-attn` has no prebuilt Windows wheels. `MODEL_FLASH_ATTENTION=1` silently falls
   back to PyTorch SDPA — functional but ~10–30% slower on long sequences.
 - The `venv\` folder lives under the repo root on NTFS. Do NOT create a second venv
   under `/mnt/c/` from WSL — pip's `.pyc` write fails on the 9P NTFS driver.
@@ -182,10 +182,10 @@ curl http://127.0.0.1:8000/v1/models
 
 | Variable | Default | Effect |
 |---|---|---|
-| `GEMMA_MODEL_ID` | `google/gemma-4-E2B-it` | HuggingFace model to load |
-| `GEMMA_QUANTIZE_4BIT` | `0` | `1` = 4-bit NF4 (required for 24B+ on 24 GB VRAM) |
-| `GEMMA_TORCH_COMPILE` | `1` | `0` = disable (recommended; overhead on short sequences) |
-| `GEMMA_FLASH_ATTENTION` | `1` | Use flash-attn if installed, else SDPA fallback |
-| `GEMMA_DEVICE_MAP` | `auto` | GPU placement strategy |
-| `GEMMA_MAX_INPUT_TOKENS` | `8192` | Truncation cap before generation to prevent OOM |
-| `GEMMA_FASTAPI_GATEWAY` | `gemma` | `gemma` = real inference; `stub` = empty responses for API tests |
+| `MODEL_ID` | `google/gemma-4-E2B-it` | HuggingFace model to load |
+| `MODEL_QUANTIZE_4BIT` | `0` | `1` = 4-bit NF4 (required for 24B+ on 24 GB VRAM) |
+| `MODEL_TORCH_COMPILE` | `1` | `0` = disable (recommended; overhead on short sequences) |
+| `MODEL_FLASH_ATTENTION` | `1` | Use flash-attn if installed, else SDPA fallback |
+| `MODEL_DEVICE_MAP` | `auto` | GPU placement strategy |
+| `MODEL_MAX_INPUT_TOKENS` | `8192` | Truncation cap before generation to prevent OOM |
+| `MODEL_GATEWAY` | `model` | `model` = real inference; `stub` = empty responses for API tests |

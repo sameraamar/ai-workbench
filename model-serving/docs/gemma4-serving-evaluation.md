@@ -68,12 +68,12 @@ Download time comes back when one of these is true:
 
 - Raw Gemma 4 source copy: [docs/research/sources/gemma4-model-card.md](./sources/gemma4-model-card.md)
 - Current sandbox research summary: [docs/research/research-notes.md](./research-notes.md)
-- Reusable planning helpers for serving analysis live in `src/gemma_serving_research`.
-- Benchmark harness lives in `src/gemma_serving_research/benchmark_runner.py`.
-- Real benchmark targets for actual inference runs live in `src/gemma_serving_research/benchmark_targets.py`.
-- E2B versus E4B concurrency simulation lives in `src/gemma_serving_research/concurrency_simulation.py`.
-- Low-cost FastAPI blueprint lives in [docs/research/low-cost-fastapi-blueprint.md](./low-cost-fastapi-blueprint.md) and `src/gemma_serving_research/low_cost_fastapi.py`.
-- A real Gemma-backed gateway for that blueprint now lives in `src/gemma_serving_research/gemma_gateway.py` and can be enabled with `GEMMA_FASTAPI_GATEWAY=gemma`.
+- Reusable planning helpers for serving analysis live in `src/model_serving/planning`.
+- Benchmark harness lives in `src/model_serving/planning/benchmarking.py`.
+- Real benchmark targets for actual inference runs live in `src/model_serving/planning/benchmark_targets.py`.
+- E2B versus E4B concurrency simulation lives in `src/model_serving/planning/simulation.py`.
+- Low-cost FastAPI blueprint lives in [docs/research/low-cost-fastapi-blueprint.md](./low-cost-fastapi-blueprint.md) and `src/model_serving/low_cost_fastapi.py`.
+- A real model-backed gateway for that blueprint now lives in `src/model_serving/gateway.py` and can be enabled with `MODEL_GATEWAY=model`.
 - Ready-to-run realistic rewrite scenarios live in [docs/research/scenarios/ebay-listing-benchmarks.json](./scenarios/ebay-listing-benchmarks.json).
 
 ## Gemma 4 Candidate Models
@@ -208,8 +208,8 @@ For each scenario, record:
 
 ### Current runnable paths
 
-- Simulated harness validation: `python .\src\gemma_serving_research\benchmark_runner.py .\tests\scenarios.json`
-- Real text-rewrite benchmark target: `python .\src\gemma_serving_research\benchmark_runner.py .\docs\research\scenarios\ebay-listing-benchmarks.json --target gemma_serving_research.benchmark_targets:benchmark_listing_rewrite`
+- Simulated harness validation: `python playground/benchmark_runner.py model-serving/tests/scenarios.json`
+- Real text-rewrite benchmark target: `python playground/benchmark_runner.py model-serving/docs/scenarios/ebay-listing-benchmarks.json --target model_serving.planning.benchmark_targets:benchmark_listing_rewrite`
 - Quiet mode when you only want final JSON: add `--quiet`
 
 The simulated path validates the harness only.

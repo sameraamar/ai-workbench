@@ -152,7 +152,7 @@ class ModelService:
         runtime_load_seconds = perf_counter() - runtime_started_at
 
         prepare_started_at = perf_counter()
-        self._emit(progress_callback, "prepare", 0.70, "Preparing Gemma text prompt...")
+        self._emit(progress_callback, "prepare", 0.70, "Preparing text prompt...")
         text = processor.apply_chat_template(
             messages,
             tokenize=False,
@@ -166,7 +166,7 @@ class ModelService:
         if input_len > max_input:
             LOGGER.warning(
                 "Input is %d tokens — truncating to last %d tokens to prevent OOM. "
-                "Set GEMMA_MAX_INPUT_TOKENS to adjust the limit.",
+                "Set MODEL_MAX_INPUT_TOKENS to adjust the limit.",
                 input_len, max_input,
             )
             inputs = {k: v[:, -max_input:] for k, v in inputs.items()}
@@ -218,7 +218,7 @@ class ModelService:
             memory_after_run=memory_after_run,
             model_device=model_device,
         )
-        self._emit(progress_callback, "complete", 1.0, "Gemma response ready.")
+        self._emit(progress_callback, "complete", 1.0, "Response ready.")
         return {
             "text": parsed,
             "input_token_count": input_token_count,
@@ -309,7 +309,7 @@ class ModelService:
         runtime_load_seconds = perf_counter() - runtime_started_at
 
         prepare_started_at = perf_counter()
-        self._emit(progress_callback, "prepare", 0.70, "Preparing Gemma inputs...")
+        self._emit(progress_callback, "prepare", 0.70, "Preparing inputs...")
         inputs = processor.apply_chat_template(
             messages,
             tokenize=True,
@@ -320,6 +320,21 @@ class ModelService:
         model_device = _resolve_model_device(model)
         inputs = inputs.to(model_device)
         input_len = inputs["input_ids"].shape[-1]
+
+        # Diagnostic: verify image data reached the model
+        if "pixel_values" not in inputs:
+            LOGGER.warning(
+                "pixel_values missing from multimodal inputs — image may not have "
+                "been decoded. Keys present: %s", list(inputs.keys()),
+            )
+        else:
+            pv = inputs["pixel_values"]
+            LOGGER.info(
+                "MULTIMODAL_DIAG: pixel_values shape=%s dtype=%s min=%.4f max=%.4f nonzero=%d input_ids=%s",
+                pv.shape, pv.dtype, pv.min().item(), pv.max().item(),
+                (pv != 0).sum().item(), inputs["input_ids"].shape,
+            )
+
         prompt_char_count = _extract_message_character_count(messages)
         memory_after_runtime = _capture_memory_snapshot(model_device)
         _reset_peak_memory_stats(model_device)
@@ -360,7 +375,7 @@ class ModelService:
             memory_after_run=memory_after_run,
             model_device=model_device,
         )
-        self._emit(progress_callback, "complete", 1.0, "Gemma response ready.")
+        self._emit(progress_callback, "complete", 1.0, "Response ready.")
         return {
             "text": parsed,
             "input_token_count": input_token_count,
@@ -397,6 +412,12 @@ class ModelService:
                 self._emit(progress_callback, "runtime", 0.06, "Checking model runtime state...")
                 self._ensure_processor(progress_callback)
                 quant_label = " (4-bit quantized)" if self._config.quantize_4bit else ""
+                if self._config.quantize_4bit:
+                    LOGGER.warning("")
+                    LOGGER.warning("⚠️  4-BIT QUANTIZATION IS ENABLED (MODEL_QUANTIZE_4BIT=1)")
+                    LOGGER.warning("⚠️  NF4 quantization destroys the vision tower on multimodal models.")
+                    LOGGER.warning("⚠️  Image understanding will NOT work. Set MODEL_QUANTIZE_4BIT=0 in .env.")
+                    LOGGER.warning("")
                 device_label = "GPU" if torch.cuda.is_available() else "CPU"
                 self._emit(progress_callback, "model", 0.34, f"Loading multimodal weights on {device_label}{quant_label}. The first run may download several GB and take a few minutes...")
                 self._multimodal_model = _load_multimodal_model(
@@ -871,7 +892,3 @@ def _build_model_load_kwargs(dtype: torch.dtype, *, quantize_4bit: bool = False,
         kwargs["device_map"] = "cpu"
     
     return kwargs
-
-
-# Backward-compat alias
-GemmaService = ModelService

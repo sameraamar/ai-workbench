@@ -13,8 +13,8 @@ This file summarizes and indexes the more detailed truth in [docs/tasks.md](./ta
 ## Project Snapshot
 
 - Project name: To Be Discovered
-- Working title: Gemma Sandbox Arena
-- Project description: A local-first sandbox UI for exploring multimodal AI models through text, image, audio, and video understanding workflows, plus simulated media-generation planning workflows. Currently built around Gemma 4, but the architecture is designed to support other models (Llama, Phi, Mistral, etc.) without changing the UI or API contract.
+- Working title: AI Workbench
+- Project description: A local-first sandbox UI for exploring multimodal AI models through text, image, audio, and video understanding workflows, plus simulated media-generation planning workflows. The architecture is designed to support multiple models (Gemma 4, Llama, Phi, Mistral, etc.) without changing the UI or API contract.
 - Target users / personas: To Be Discovered
 - Primary business goal: To Be Discovered
 - Technology preferences: Python, Streamlit, Hugging Face Transformers, PyTorch, FastAPI, httpx
@@ -27,7 +27,7 @@ The repo is split into three independent projects under a single git root:
 
 | Folder | Purpose | Entry point | Tests |
 |---|---|---|---|
-| `model-serving/` | FastAPI model-serving backend (loads Gemma, exposes `/generate` and job endpoints) | `uvicorn gemma_serving.app:app` | `model-serving/tests/` (24 tests) |
+| `model-serving/` | FastAPI model-serving backend (loads models, exposes `/generate` and job endpoints) | `uvicorn model_serving.app:app` | `model-serving/tests/` (24 tests) |
 | `ui/` | Streamlit sandbox UI (calls model-serving over HTTP) | `streamlit run ui/app.py` | `ui/tests/` (4 tests) |
 | `playground/` | Standalone demo and benchmark scripts | Individual `.py` files | — |
 

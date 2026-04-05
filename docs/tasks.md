@@ -706,6 +706,31 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - First start also compiles CUDA graphs (~53s); subsequent starts use the cache at `~/.cache/vllm/torch_compile_cache/`.
 - Dependencies: 3.16
 
+### 3.18 Fix multimodal image handling through UI
+- Status: [x]
+- Started: 2026-04-06
+- Completed: 2026-04-06
+- Included in version:
+- Acceptance criteria:
+  - Image uploads and clipboard pastes produce correct model descriptions through the Streamlit UI.
+  - Prior-turn images with stale temp-file paths do not crash the server.
+  - SSE streaming errors are surfaced to the client instead of silently returning empty responses.
+- Validation:
+  - Root cause 1 (empty responses): `_generate_multimodal()` is one-shot (never calls `token_callback`), so the SSE streaming handler in `openai_compat.py` emitted only `finish_reason=stop` without any content. Fixed by checking `result_holder` after the worker thread finishes and emitting any unstreamed text as a final delta chunk.
+  - Root cause 2 (stale prior-turn images): `model_history` in `app.py` stored local file paths (e.g. `C:/Users/.../Temp/tmp123.png`) for images. On subsequent turns, `_ensure_data_uri_or_url()` tried to resolve them; if the temp file was deleted, the raw path string was sent to the server, which crashed with `ValueError: Incorrect image source` inside `transformers.image_utils.load_image`.
+  - Root cause 3 (primary — garbage image descriptions): `.env` had `MODEL_QUANTIZE_4BIT=1`. NF4 quantization via BitsAndBytes destroys the vision tower on Gemma 4 E2B — the model cannot decode images at all. Outputs include "Please provide an image", hallucinated brand names ("Pepsi", "ESPN"), and repeated nonsense words ("epip", "pepina"). Confirmed: 5/5 requests with quantization ON produce garbage; 5/5 with quantization OFF produce correct descriptions. Fixed `.env` to `MODEL_QUANTIZE_4BIT=0` and added a prominent startup warning in `model_service.py` when quantization + multimodal model are both active.
+  - Fix for stale images (a): `app.py` now converts image paths to `data:` URIs at storage time (via `_ensure_data_uri_or_url()`) before appending to `model_history`. Prior turns always carry valid inline image data.
+  - Fix for stale images (b): `_to_openai_messages()` in `serving_client.py` now drops image blocks whose URLs cannot be resolved (returns empty string from `_ensure_data_uri_or_url` → block is skipped with a warning). This provides graceful degradation for legacy session state.
+  - Fix for SSE error surfacing: `openai_compat.py` SSE worker now catches exceptions and emits an `[Error: ...]` delta chunk instead of silently returning an empty stream.
+  - `pixel_values` warning guard added to `_generate_multimodal()` for future debugging.
+  - Tested with `jw.png` (jewelry, 205x167) and screenshot (480x545) — 5/5 runs at temperature=1.0 with exact UI parameters produce correct descriptions ("floral or crystal headpiece/wreath").
+  - All 45 tests pass.
+- Notes:
+  - The `_generate_multimodal()` path remains one-shot (no `TextIteratorStreamer`). True token-by-token streaming for multimodal is a future enhancement.
+  - Data URI storage in session state increases memory use but is bounded by conversation length.
+  - 4-bit quantization is only safe for text-only workloads. For multimodal models, leave `MODEL_QUANTIZE_4BIT=0`.
+- Dependencies: 3.17
+
 ### 9.1 Add persistence for run history
 - Status: [ ]
 - Started:

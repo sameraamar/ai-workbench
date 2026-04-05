@@ -14,7 +14,7 @@ if __package__ in {None, ""}:
     MODEL_SERVING_SRC = PACKAGE_ROOT / "model-serving" / "src"
     if str(MODEL_SERVING_SRC) not in sys.path:
         sys.path.insert(0, str(MODEL_SERVING_SRC))
-    from gemma_serving.benchmarking import BenchmarkScenario, load_scenarios, run_benchmark
+    from model_serving.planning.benchmarking import BenchmarkScenario, load_scenarios, run_benchmark
 else:
     from .benchmarking import BenchmarkScenario, load_scenarios, run_benchmark
 

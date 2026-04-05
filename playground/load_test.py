@@ -37,7 +37,7 @@ if __package__ in {None, ""}:
         sys.path.insert(0, str(MODEL_SERVING_SRC))
 
 try:
-    from gemma_serving.domain import RequestMode
+    from model_serving.domain import RequestMode
 except ImportError:
     # Fallback for standalone usage
     from enum import Enum

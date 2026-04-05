@@ -4,39 +4,38 @@ from dataclasses import dataclass, field
 import os
 
 
-def _env(new: str, old: str, default: str = "") -> str:
-    """Read *new* env-var, fall back to *old* for backward compat."""
-    return os.getenv(new) or os.getenv(old, default)
+def _env(name: str, default: str = "") -> str:
+    return os.getenv(name, default)
 
 
-def _env_bool(new: str, old: str, default: str = "0") -> bool:
-    return _env(new, old, default).strip().lower() in ("1", "true", "yes")
+def _env_bool(name: str, default: str = "0") -> bool:
+    return _env(name, default).strip().lower() in ("1", "true", "yes")
 
 
-DEFAULT_MODEL_ID = _env("MODEL_ID", "GEMMA_MODEL_ID", "google/gemma-4-E2B-it")
-MODEL_CACHE_DIR: str | None = _env("MODEL_CACHE_DIR", "GEMMA_MODEL_CACHE_DIR") or None
-FORCE_DOWNLOAD: bool = _env_bool("MODEL_FORCE_DOWNLOAD", "GEMMA_FORCE_DOWNLOAD")
-QUANTIZE_4BIT: bool = _env_bool("MODEL_QUANTIZE_4BIT", "GEMMA_QUANTIZE_4BIT")
+DEFAULT_MODEL_ID = _env("MODEL_ID", "google/gemma-4-E2B-it")
+MODEL_CACHE_DIR: str | None = _env("MODEL_CACHE_DIR") or None
+FORCE_DOWNLOAD: bool = _env_bool("MODEL_FORCE_DOWNLOAD")
+QUANTIZE_4BIT: bool = _env_bool("MODEL_QUANTIZE_4BIT")
 
 # GPU Configuration
-FORCE_CPU: bool = _env_bool("MODEL_FORCE_CPU", "GEMMA_FORCE_CPU")
+FORCE_CPU: bool = _env_bool("MODEL_FORCE_CPU")
 GPU_ID: int | None = None
-gpu_id_str = _env("MODEL_GPU_ID", "GEMMA_GPU_ID").strip()
+gpu_id_str = _env("MODEL_GPU_ID").strip()
 if gpu_id_str and gpu_id_str != "-1":
     try:
         GPU_ID = int(gpu_id_str)
     except ValueError:
         GPU_ID = None
-DEVICE_MAP: str = _env("MODEL_DEVICE_MAP", "GEMMA_DEVICE_MAP", "auto")
+DEVICE_MAP: str = _env("MODEL_DEVICE_MAP", "auto")
 
 # Performance Optimization Configuration
-ENABLE_TORCH_COMPILE: bool = _env_bool("MODEL_TORCH_COMPILE", "GEMMA_TORCH_COMPILE", "1")
-ENABLE_FLASH_ATTENTION: bool = _env_bool("MODEL_FLASH_ATTENTION", "GEMMA_FLASH_ATTENTION", "1")
-ENABLE_MEMORY_OPTIMIZATIONS: bool = _env_bool("MODEL_MEMORY_OPT", "GEMMA_MEMORY_OPT", "1")
-OPTIMIZE_FOR_INFERENCE: bool = _env_bool("MODEL_INFERENCE_OPT", "GEMMA_INFERENCE_OPT", "1")
-TORCH_COMPILE_MODE: str = _env("MODEL_COMPILE_MODE", "GEMMA_COMPILE_MODE", "default")
+ENABLE_TORCH_COMPILE: bool = _env_bool("MODEL_TORCH_COMPILE", "1")
+ENABLE_FLASH_ATTENTION: bool = _env_bool("MODEL_FLASH_ATTENTION", "1")
+ENABLE_MEMORY_OPTIMIZATIONS: bool = _env_bool("MODEL_MEMORY_OPT", "1")
+OPTIMIZE_FOR_INFERENCE: bool = _env_bool("MODEL_INFERENCE_OPT", "1")
+TORCH_COMPILE_MODE: str = _env("MODEL_COMPILE_MODE", "default")
 # Safety cap on input tokens before generation to prevent OOM on long prompts.
-MAX_INPUT_TOKENS: int = int(_env("MODEL_MAX_INPUT_TOKENS", "GEMMA_MAX_INPUT_TOKENS", "8192"))
+MAX_INPUT_TOKENS: int = int(_env("MODEL_MAX_INPUT_TOKENS", "8192"))
 
 
 @dataclass

@@ -21,8 +21,8 @@ repo_root = Path(__file__).parent.parent
 model_serving_path = repo_root / "model-serving" / "src"
 sys.path.insert(0, str(model_serving_path))
 
-from gemma_serving.config import ServingConfig, GenerationSettings
-from gemma_serving.gemma_service import GemmaService
+from model_serving.config import ServingConfig, GenerationSettings
+from model_serving.model_service import ModelService
 
 def setup_logging():
     """Setup logging to see optimization details."""
@@ -34,7 +34,7 @@ def setup_logging():
 def test_optimized_performance():
     """Test optimized configuration and show results."""
     print("=" * 60)
-    print("🚀 OPTIMIZED GEMMA 4 PERFORMANCE TEST")
+    print("🚀 OPTIMIZED MODEL PERFORMANCE TEST")
     print("=" * 60)
     print(f"PyTorch Version: {torch.__version__}")
     print(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'}")
@@ -63,7 +63,7 @@ def test_optimized_performance():
         torch.cuda.empty_cache()
     
     # Initialize service
-    service = GemmaService(optimized_config)
+    service = ModelService(optimized_config)
     
     # Load model and measure time
     load_start = time.perf_counter()
@@ -155,11 +155,11 @@ def test_optimized_performance():
     # Environment variable suggestions
     print(f"\n🔧 TO USE THESE OPTIMIZATIONS PERMANENTLY:")
     print(f"   Add to your environment (.env file or shell):")
-    print(f"   export GEMMA_QUANTIZE_4BIT=1")
-    print(f"   export GEMMA_TORCH_COMPILE=1")
-    print(f"   export GEMMA_FLASH_ATTENTION=1")
-    print(f"   export GEMMA_MEMORY_OPT=1")
-    print(f"   export GEMMA_INFERENCE_OPT=1")
+    print(f"   export MODEL_QUANTIZE_4BIT=1")
+    print(f"   export MODEL_TORCH_COMPILE=1")
+    print(f"   export MODEL_FLASH_ATTENTION=1")
+    print(f"   export MODEL_MEMORY_OPT=1")
+    print(f"   export MODEL_INFERENCE_OPT=1")
     
     return avg_rate
 

@@ -4,12 +4,12 @@ from dataclasses import dataclass, field
 import os
 
 
-DEFAULT_MODEL_ID = os.getenv("GEMMA_MODEL_ID", "google/gemma-4-E2B-it")
+DEFAULT_MODEL_ID = os.getenv("MODEL_ID", "google/gemma-4-E2B-it")
 DEFAULT_SYSTEM_PROMPT = os.getenv(
-    "GEMMA_SYSTEM_PROMPT",
+    "MODEL_SYSTEM_PROMPT",
     "You are a helpful assistant. Answer with concise, robust, direct, and short responses. Do not elaborate unless the user asks for more detail.",
 )
-SERVING_URL = os.getenv("GEMMA_SERVING_URL", "http://localhost:8000")
+SERVING_URL = os.getenv("MODEL_SERVING_URL", "http://localhost:8000")
 
 
 @dataclass

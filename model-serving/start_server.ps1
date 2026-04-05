@@ -37,13 +37,27 @@ try {
     }
 
     # --- Print config summary ---------------------------------------------
-    $quantize    = if ($env:GEMMA_QUANTIZE_4BIT -eq "1") { "ENABLED" } else { "DISABLED" }
-    $compile     = if ($env:GEMMA_TORCH_COMPILE -eq "0") { "DISABLED" } else { "ENABLED" }
-    $memoryOpt   = if ($env:GEMMA_MEMORY_OPT    -eq "0") { "DISABLED" } else { "ENABLED" }
+    $quantize    = if ($env:MODEL_QUANTIZE_4BIT -eq "1") { "ENABLED" } else { "DISABLED" }
+    $compile     = if ($env:MODEL_TORCH_COMPILE -eq "0") { "DISABLED" } else { "ENABLED" }
+    $memoryOpt   = if ($env:MODEL_MEMORY_OPT    -eq "0") { "DISABLED" } else { "ENABLED" }
 
     Write-Host "   Quantization : $quantize"
     Write-Host "   Torch Compile: $compile"
     Write-Host "   Memory Opt   : $memoryOpt"
+
+    if ($env:MODEL_QUANTIZE_4BIT -eq "1") {
+        Write-Host ""
+        Write-Host "   ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Red
+        Write-Host "   ║  ⚠️  WARNING: 4-BIT QUANTIZATION IS ENABLED              ║" -ForegroundColor Red
+        Write-Host "   ║                                                          ║" -ForegroundColor Red
+        Write-Host "   ║  Image/multimodal understanding will NOT work.           ║" -ForegroundColor Red
+        Write-Host "   ║  NF4 quantization destroys the vision tower.             ║" -ForegroundColor Red
+        Write-Host "   ║  The model will hallucinate or say 'provide an image'.   ║" -ForegroundColor Red
+        Write-Host "   ║                                                          ║" -ForegroundColor Red
+        Write-Host "   ║  Set MODEL_QUANTIZE_4BIT=0 in .env for image support.   ║" -ForegroundColor Red
+        Write-Host "   ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Red
+        Write-Host ""
+    }
 
     # --- Set PYTHONPATH ----------------------------------------------------
     $srcPath = Join-Path $PSScriptRoot "src"
