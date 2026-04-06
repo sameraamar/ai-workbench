@@ -173,6 +173,22 @@ _AUDIO_EXTS = frozenset({".wav", ".mp3", ".flac", ".ogg", ".m4a"})
 _VIDEO_EXTS = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm"})
 
 
+def _make_thumbnail_data_uri(image_path: Path, max_size: int = 80) -> str | None:
+    """Create a small base64 data URI thumbnail for chat history display."""
+    try:
+        from PIL import Image as _PILImage
+        import base64
+        from io import BytesIO
+        img = _PILImage.open(image_path)
+        img.thumbnail((max_size, max_size))
+        buf = BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return f"data:image/png;base64,{b64}"
+    except Exception:
+        return None
+
+
 def _conversation_key(*, model_id: str, system_prompt: str) -> str:
     return f"{model_id}|{system_prompt.strip()}"
 
@@ -204,8 +220,16 @@ def _render_conversation_history(history: list[dict]) -> None:
         role = message["role"]
         with st.chat_message("user" if role == "user" else "assistant"):
             st.markdown(message["text"])
+            # Show image thumbnail if available
+            thumb = message.get("image_thumbnail")
             labels = message.get("attachment_labels", [])
-            if labels:
+            if thumb and labels:
+                cols = st.columns([0.08, 0.92])
+                with cols[0]:
+                    st.image(thumb, width=60)
+                with cols[1]:
+                    st.caption("📎 " + ", ".join(labels))
+            elif labels:
                 st.caption("📎 " + ", ".join(labels))
 
 
@@ -734,9 +758,14 @@ def main() -> None:
             "prompt_used": result.prompt_used,
         }
 
+        # Build thumbnail for chat history (first image attachment, if any)
+        _thumb_uri: str | None = None
+        if attachment.image_paths:
+            _thumb_uri = _make_thumbnail_data_uri(attachment.image_paths[0])
+
         model_history.append({"role": "user", "content": user_content})
         model_history.append({"role": "assistant", "content": [{"type": "text", "text": result.response_text}]})
-        ui_history.append({"role": "user", "text": user_prompt, "attachment_labels": attachment_labels})
+        ui_history.append({"role": "user", "text": user_prompt, "attachment_labels": attachment_labels, "image_thumbnail": _thumb_uri})
         ui_history.append({"role": "assistant", "text": result.response_text, "run_summary": _run_summary})
         st.session_state["_generating"] = False
         st.session_state.pop("_pending_turn", None)
