@@ -2,18 +2,21 @@
 Capture a UI demo and produce an animated GIF for the README.
 
 Scenes:
-  1. Startup — model connected, sidebar visible, conversation empty
-  2. Text prompt submitted — streaming in progress (mid-generation)
-  3. Text response complete — full response visible with run metrics
-  4. Image uploaded — file attached, visible in the upload area
-  5. Image prompt streaming — model responding mid-generation
-  6. Image description complete — final response with attachment label
+  1. Startup — full UI loaded
+  2. Model dropdown open
+  3. Text streaming
+  4. Text response complete
+  5. Video preview — grid of sampled frames
+  6. Video uploaded in UI
+  7-9. Video description streaming (3 snapshots)
+  10. Video description complete (top)
+  11. Scrolled to show more
 
 Requirements:
-  pip install playwright Pillow
+  pip install playwright Pillow opencv-python
   playwright install chromium
 
-Run from the repo root with both servers (model-serving + UI) running:
+Run from the repo root with both servers running:
   python docs/screenshots/capture_screenshots.py
 """
 import asyncio
@@ -21,196 +24,239 @@ import sys
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image
+import cv2
+from PIL import Image, ImageDraw, ImageFont
 
-OUT = Path(__file__).parent        # docs/screenshots/
+OUT = Path(__file__).parent
 TEST_IMAGE = OUT / "test-image.png"
+TEST_VIDEO = OUT / "test-video.mp4"
 BASE_URL = "http://localhost:8501"
 GIF_PATH = OUT / "demo.gif"
 
-VIEWPORT = {"width": 1400, "height": 900}
+VIEWPORT = {"width": 1400, "height": 1200}
+HOLD_MS = 3500
+STREAMING_MS = 1200
 
-# GIF timing (milliseconds)
-HOLD_MS = 3500       # how long each key scene is shown
-STREAMING_MS = 1200  # how long each streaming snapshot is shown
+CHAT_SELECTOR = '[data-testid*="Chat"] textarea'
 
 
-async def wait_for_streamlit(page, timeout_ms: int = 60_000):
-    """Block until Streamlit finishes its initial render cycle."""
-    await page.wait_for_load_state("networkidle", timeout=timeout_ms)
-    # Wait for the sidebar to be fully rendered (model selector visible)
+def build_video_preview(video_path: Path, cols: int = 4, thumb_w: int = 320) -> Image.Image:
+    """Create a grid of sampled frames from the video as a single PIL image."""
+    cap = cv2.VideoCapture(str(video_path))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    n_frames = cols * 2  # 2 rows
+    indexes = [int(total * i / n_frames) for i in range(n_frames)]
+
+    thumbs = []
+    for idx in indexes:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(rgb)
+        ratio = thumb_w / img.width
+        img = img.resize((thumb_w, int(img.height * ratio)))
+        # Add timestamp label
+        ts = idx / fps if fps > 0 else 0
+        draw = ImageDraw.Draw(img)
+        label = f"{ts:.1f}s"
+        draw.rectangle([0, 0, 60, 20], fill=(0, 0, 0, 180))
+        draw.text((4, 2), label, fill="white")
+        thumbs.append(img)
+    cap.release()
+
+    if not thumbs:
+        return Image.new("RGB", (800, 400), (30, 30, 40))
+
+    th = thumbs[0].height
+    padding = 4
+    grid_w = cols * thumb_w + (cols + 1) * padding
+    rows = (len(thumbs) + cols - 1) // cols
+    grid_h = rows * th + (rows + 1) * padding + 40  # +40 for title
+
+    canvas = Image.new("RGB", (grid_w, grid_h), (30, 30, 40))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((padding, 8), f"Video: {video_path.name}  ({total} frames, {total/fps:.1f}s)", fill="white")
+
+    for i, thumb in enumerate(thumbs):
+        r, c = divmod(i, cols)
+        x = padding + c * (thumb_w + padding)
+        y = 40 + padding + r * (th + padding)
+        canvas.paste(thumb, (x, y))
+
+    return canvas
+
+
+async def wait_for_streamlit(page):
+    await page.wait_for_load_state("networkidle", timeout=60_000)
     try:
-        await page.locator('[data-testid="stSidebar"]').wait_for(
-            state="visible", timeout=15_000,
-        )
+        await page.locator('[data-testid="stSidebar"]').wait_for(state="visible", timeout=15_000)
     except Exception:
         pass
-    # Extra settle time for Streamlit's JS hydration
-    await asyncio.sleep(3)
+    await asyncio.sleep(4)
 
 
-async def wait_for_generation_start(page, timeout_ms: int = 60_000):
-    """Wait until the chat input becomes disabled (generation started)."""
+async def wait_gen_start(page):
     await page.wait_for_function(
-        """() => {
-            const el = document.querySelector('[data-testid="stChatInput"] textarea');
-            return el && el.disabled;
-        }""",
-        timeout=timeout_ms,
+        """() => { const el = document.querySelector('[data-testid*="Chat"] textarea'); return el && el.disabled; }""",
+        timeout=60_000,
     )
 
 
-async def wait_for_generation_done(page, timeout_ms: int = 180_000):
-    """Wait until the chat input re-enables (generation complete)."""
+async def wait_gen_done(page):
     await page.wait_for_function(
-        """() => {
-            const el = document.querySelector('[data-testid="stChatInput"] textarea');
-            return el && !el.disabled;
-        }""",
-        timeout=timeout_ms,
+        """() => { const el = document.querySelector('[data-testid*="Chat"] textarea'); return el && !el.disabled; }""",
+        timeout=600_000,
     )
     await asyncio.sleep(3)
 
 
-async def scroll_to_top(page):
-    """Scroll Streamlit's app container to the top."""
+async def scroll_top(page):
     await page.evaluate("""
-        const containers = [
-            document.querySelector('[data-testid="stAppViewContainer"]'),
-            document.querySelector('[data-testid="stMain"]'),
-            document.documentElement,
-            document.body,
-        ];
-        containers.filter(Boolean).forEach(c => { c.scrollTop = 0; });
+        [document.querySelector('[data-testid="stAppViewContainer"]'),
+         document.querySelector('[data-testid="stMain"]'),
+         document.documentElement, document.body]
+        .filter(Boolean).forEach(c => c.scrollTop = 0);
         window.scrollTo(0, 0);
     """)
     await asyncio.sleep(0.8)
 
 
-async def capture(page, label: str) -> Image.Image:
-    """Take a screenshot and return it as a PIL Image."""
+async def scroll_chat(page, px=500):
+    await page.evaluate(f"""
+        const el = document.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"]');
+        if (el.length) el[0].scrollTop += {px};
+    """)
+    await asyncio.sleep(0.8)
+
+
+async def snap(page, label):
     raw = await page.screenshot(full_page=False)
     img = Image.open(BytesIO(raw)).convert("RGBA")
-    png_path = OUT / f"{label}.png"
-    img.save(png_path)
-    print(f"  ✓ {png_path}")
+    path = OUT / f"{label}.png"
+    img.save(path)
+    print(f"  ✓ {path.name}")
     return img
 
 
-def build_gif(frames: list[tuple[Image.Image, int]]) -> None:
-    """Stitch frames into an animated GIF."""
+def build_gif(frames):
     if not frames:
-        print("No frames captured — skipping GIF.")
         return
-
-    rgb_images = [img.convert("RGB") for img, _ in frames]
-    durations = [d for _, d in frames]
-
-    rgb_images[0].save(
-        GIF_PATH,
-        save_all=True,
-        append_images=rgb_images[1:],
-        duration=durations,
-        loop=0,
-        optimize=True,
-    )
-    size_kb = GIF_PATH.stat().st_size / 1024
-    print(f"\n✓ GIF saved: {GIF_PATH} ({size_kb:.0f} KB, {len(frames)} frames)")
+    rgb = [img.convert("RGB") for img, _ in frames]
+    dur = [d for _, d in frames]
+    rgb[0].save(GIF_PATH, save_all=True, append_images=rgb[1:], duration=dur, loop=0, optimize=True)
+    print(f"\n✓ GIF: {GIF_PATH} ({GIF_PATH.stat().st_size/1024:.0f} KB, {len(frames)} frames)")
 
 
 async def main():
     from playwright.async_api import async_playwright
 
-    if not TEST_IMAGE.exists():
-        print(f"ERROR: Test image not found at {TEST_IMAGE}")
-        sys.exit(1)
+    for f, n in [(TEST_IMAGE, "test image"), (TEST_VIDEO, "test video")]:
+        if not f.exists():
+            print(f"ERROR: {n} not found at {f}")
+            sys.exit(1)
 
-    frames: list[tuple[Image.Image, int]] = []
+    frames = []
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         ctx = await browser.new_context(viewport=VIEWPORT)
         page = await ctx.new_page()
 
-        # ── Scene 1: Startup ────────────────────────────────────
-        print("Scene 1: Startup (waiting for full render)…")
+        # ── 1: Startup ──────────────────────────────────────────
+        print("1. Startup…")
         await page.goto(BASE_URL, wait_until="networkidle")
         await wait_for_streamlit(page)
-        img = await capture(page, "ui-startup")
-        frames.append((img, HOLD_MS))
+        frames.append((await snap(page, "ui-startup"), HOLD_MS))
 
-        # ── Scene 1b: Show model dropdown open ─────────────────
-        print("  Opening model dropdown…")
-        model_select = page.locator('[data-testid="stSidebar"] [data-testid="stSelectbox"]').first
-        await model_select.click()
-        await asyncio.sleep(1)
-        img = await capture(page, "ui-model-dropdown")
-        frames.append((img, HOLD_MS))
-        # Close dropdown by pressing Escape (keeps current selection)
-        await page.keyboard.press("Escape")
-        await asyncio.sleep(0.5)
+        # ── 2: Model dropdown ───────────────────────────────────
+        print("2. Model dropdown…")
+        try:
+            for sel in ['[data-testid="stSidebar"] [data-baseweb="select"]',
+                        '[data-testid="stSidebar"] .stSelectbox']:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.click(timeout=5_000)
+                    await asyncio.sleep(1)
+                    frames.append((await snap(page, "ui-model-dropdown"), HOLD_MS))
+                    await page.keyboard.press("Escape")
+                    await asyncio.sleep(0.5)
+                    break
+        except Exception:
+            print("  ⚠ Skipped dropdown")
 
-        # ── Scene 2: Text prompt — streaming ────────────────────
-        print("Scene 2: Text prompt…")
-        chat_input = page.locator('[data-testid="stChatInput"] textarea')
-        await chat_input.wait_for(state="visible", timeout=10_000)
-        await chat_input.click()
-        await chat_input.type("Write a one-sentence tagline for a local AI sandbox tool.")
+        # Reload for clean state
+        await page.goto(BASE_URL, wait_until="networkidle")
+        await wait_for_streamlit(page)
+        await asyncio.sleep(3)
+
+        # ── 3: Text prompt ───────────────────────────────────────
+        print("3. Text prompt…")
+        ci = page.locator(CHAT_SELECTOR)
+        await ci.wait_for(state="visible", timeout=60_000)
+        await ci.click()
+        await ci.type("Write a one-sentence tagline for a local AI sandbox tool.")
         await page.keyboard.press("Enter")
+        await wait_gen_start(page)
+        await asyncio.sleep(3)
+        frames.append((await snap(page, "ui-text-streaming"), STREAMING_MS))
 
-        # Wait for generation to start, then capture 2 streaming snapshots
-        print("  Capturing streaming…")
-        await wait_for_generation_start(page)
+        # ── 4: Text complete ─────────────────────────────────────
+        print("4. Text complete…")
+        await wait_gen_done(page)
+        await scroll_top(page)
+        frames.append((await snap(page, "ui-text-response"), HOLD_MS))
+
+        # ── 5: Video preview (generated offline) ─────────────────
+        print("5. Video preview…")
+        preview = build_video_preview(TEST_VIDEO)
+        # Pad to viewport width for consistent GIF frame size
+        padded = Image.new("RGB", (VIEWPORT["width"], VIEWPORT["height"]), (30, 30, 40))
+        x_off = (VIEWPORT["width"] - preview.width) // 2
+        y_off = (VIEWPORT["height"] - preview.height) // 2
+        padded.paste(preview, (x_off, max(y_off, 20)))
+        (OUT / "ui-video-preview.png").unlink(missing_ok=True)
+        padded.save(OUT / "ui-video-preview.png")
+        print(f"  ✓ ui-video-preview.png")
+        frames.append((padded.convert("RGBA"), HOLD_MS))
+
+        # ── 6: Video uploaded ─────────────────────────────────────
+        print("6. Video upload…")
+        tab = page.get_by_text("📁 Upload", exact=True)
+        await tab.click()
+        await asyncio.sleep(0.5)
+        fi = page.locator('[data-testid="stFileUploaderDropzone"] input[type="file"]')
+        await fi.set_input_files(str(TEST_VIDEO))
         await asyncio.sleep(2)
-        img = await capture(page, "ui-text-streaming-1")
-        frames.append((img, STREAMING_MS))
-        await asyncio.sleep(3)
-        img = await capture(page, "ui-text-streaming-2")
-        frames.append((img, STREAMING_MS))
+        frames.append((await snap(page, "ui-video-uploaded"), HOLD_MS))
 
-        # ── Scene 3: Text response complete ─────────────────────
-        print("  Waiting for completion…")
-        await wait_for_generation_done(page)
-        await scroll_to_top(page)
-        img = await capture(page, "ui-text-response")
-        frames.append((img, HOLD_MS))
-
-        # ── Scene 4: Image uploaded (before sending) ────────────
-        print("Scene 4: Image upload…")
-        upload_tab = page.get_by_text("📁 Upload", exact=True)
-        await upload_tab.click()
-        await asyncio.sleep(0.5)
-        file_input = page.locator(
-            '[data-testid="stFileUploaderDropzone"] input[type="file"]'
-        )
-        await file_input.set_input_files(str(TEST_IMAGE))
-        await asyncio.sleep(2)  # let Streamlit render the upload preview
-        img = await capture(page, "ui-image-uploaded")
-        frames.append((img, HOLD_MS))
-
-        # ── Scene 5: Image prompt — streaming ───────────────────
-        print("Scene 5: Image description…")
-        chat_input2 = page.locator('[data-testid="stChatInput"] textarea')
-        await chat_input2.click()
-        await chat_input2.type("Describe what you see in this image in detail.")
+        # ── 7-9: Video description streaming ──────────────────────
+        print("7. Video description streaming…")
+        ci2 = page.locator(CHAT_SELECTOR)
+        await ci2.click()
+        await ci2.type("Describe the content of this video in detail. Describe each scene, every element, colors, objects, and mood. Be thorough and descriptive.")
         await page.keyboard.press("Enter")
+        await wait_gen_start(page)
+        for i in range(3):
+            await asyncio.sleep(6)
+            frames.append((await snap(page, f"ui-video-streaming-{i+1}"), STREAMING_MS))
+            print(f"  streaming frame {i+1}/3")
 
-        print("  Capturing streaming…")
-        await wait_for_generation_start(page)
-        await asyncio.sleep(3)
-        img = await capture(page, "ui-image-streaming")
-        frames.append((img, STREAMING_MS))
+        # ── 10: Video description complete ────────────────────────
+        print("10. Video description complete…")
+        await wait_gen_done(page)
+        await scroll_top(page)
+        frames.append((await snap(page, "ui-video-description-top"), HOLD_MS))
 
-        # ── Scene 6: Image description complete ─────────────────
-        print("  Waiting for completion…")
-        await wait_for_generation_done(page)
-        await scroll_to_top(page)
-        img = await capture(page, "ui-image-description")
-        frames.append((img, HOLD_MS))
+        # ── 11: Scrolled ─────────────────────────────────────────
+        print("11. Scroll…")
+        await scroll_chat(page, 600)
+        frames.append((await snap(page, "ui-video-description-scroll"), HOLD_MS))
 
         await browser.close()
 
-    # ── Build the GIF ────────────────────────────────────────────
     print("\nBuilding GIF…")
     build_gif(frames)
     print("Done.")
