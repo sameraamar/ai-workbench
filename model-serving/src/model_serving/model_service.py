@@ -245,8 +245,8 @@ class ModelService:
                 with torch.inference_mode():
                     model.generate(
                         **inputs,
-                        do_sample=True,
-                        temperature=settings.temperature,
+                        do_sample=settings.temperature > 0,
+                        temperature=settings.temperature if settings.temperature > 0 else 1.0,
                         top_p=settings.top_p,
                         top_k=settings.top_k,
                         max_new_tokens=settings.max_new_tokens,
@@ -288,8 +288,8 @@ class ModelService:
         with torch.inference_mode():
             outputs = model.generate(
                 **inputs,
-                do_sample=True,
-                temperature=settings.temperature,
+                do_sample=settings.temperature > 0,
+                temperature=settings.temperature if settings.temperature > 0 else 1.0,
                 top_p=settings.top_p,
                 top_k=settings.top_k,
                 max_new_tokens=settings.max_new_tokens,
@@ -344,8 +344,8 @@ class ModelService:
         self._emit(progress_callback, "generate", 0.84, "Running generation...")
         outputs = model.generate(
             **inputs,
-            do_sample=True,
-            temperature=settings.temperature,
+            do_sample=settings.temperature > 0,
+            temperature=settings.temperature if settings.temperature > 0 else 1.0,
             top_p=settings.top_p,
             top_k=settings.top_k,
             max_new_tokens=settings.max_new_tokens,

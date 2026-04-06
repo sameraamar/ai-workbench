@@ -20,7 +20,7 @@ if str(SRC_DIR) not in sys.path:
 
 from ai_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, SERVING_URL
 from ai_sandbox.domain import RunResult
-from ai_sandbox.media import extract_video_frames, persist_upload
+from ai_sandbox.media import persist_upload, extract_video_frames, ImageProcessor, AudioProcessor, VideoProcessor, resolve_media_url, MediaType
 from ai_sandbox.model_profiles import MODEL_LABELS, get_capabilities, get_label_for_model_id, get_model_id, model_labels_for_backend
 from ai_sandbox.services.sandbox_service import SandboxService, TurnAttachment
 from ai_sandbox.services.serving_client import _ensure_data_uri_or_url
@@ -167,26 +167,16 @@ def _calculate_tokens_per_second(output_token_count: int | None, elapsed_seconds
     return output_token_count / elapsed_seconds
 
 
-# File extension sets used to detect what kind of media is attached per turn.
-_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
-_AUDIO_EXTS = frozenset({".wav", ".mp3", ".flac", ".ogg", ".m4a"})
-_VIDEO_EXTS = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm"})
-
-
 def _make_thumbnail_data_uri(image_path: Path, max_size: int = 80) -> str | None:
-    """Create a small base64 data URI thumbnail for chat history display."""
-    try:
-        from PIL import Image as _PILImage
-        import base64
-        from io import BytesIO
-        img = _PILImage.open(image_path)
-        img.thumbnail((max_size, max_size))
-        buf = BytesIO()
-        img.save(buf, format="PNG", optimize=True)
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return f"data:image/png;base64,{b64}"
-    except Exception:
-        return None
+    """Create a small base64 data URI thumbnail for chat history display.
+
+    Delegates to the appropriate media processor based on file type.
+    """
+    if VideoProcessor.matches(image_path):
+        return VideoProcessor.make_thumbnail_data_uri(image_path, max_size)
+    if AudioProcessor.matches(image_path):
+        return AudioProcessor.make_thumbnail_data_uri(image_path, max_size)
+    return ImageProcessor.make_thumbnail_data_uri(image_path, max_size)
 
 
 def _conversation_key(*, model_id: str, system_prompt: str) -> str:
@@ -402,6 +392,11 @@ def main() -> None:
         enable_thinking = st.toggle("Enable thinking", value=False)
         stream_output = st.checkbox("Stream text response to UI", value=True)
         wrap_code = st.checkbox("Wrap code blocks", value=False, help="Toggle word-wrap on code blocks. Off = horizontal scroll.")
+        if caps.video:
+            video_frames = st.slider("Video frames", min_value=2, max_value=10, value=6, step=2,
+                                     help="Number of evenly-spaced frames to extract from uploaded videos. Max 10 (vLLM server limit). More frames = richer understanding but slower inference.")
+        else:
+            video_frames = 6
         st.caption(f"Active model: {_active_model or model_id}")
         st.caption(f"Backend: {'Native (Transformers)' if _is_native_backend else 'vLLM'} · {SERVING_URL}")
 
@@ -542,9 +537,9 @@ def main() -> None:
         with _tab_url:
             if caps.image:
                 image_url_input = st.text_input(
-                    "Image URL",
-                    placeholder="https://example.com/image.jpg",
-                    help="Paste a public https:// image URL. The model processor fetches it directly.",
+                    "Media URL",
+                    placeholder="https://example.com/photo.jpg",
+                    help="Paste a direct URL to an image, audio, or video file. Images are sent directly to the model; audio/video files are downloaded first. Streaming URLs (YouTube, etc.) are not supported.",
                     disabled=_generating,
                     key=f"url_input_{_input_key}",
                 )
@@ -656,21 +651,44 @@ def main() -> None:
             _pending_uploaded_path.exists(),
             _pending_uploaded_path.stat().st_size if _pending_uploaded_path.exists() else 'N/A',
         )
-        if ext in _IMAGE_EXTS:
+        if ImageProcessor.is_image(_pending_uploaded_path):
             attachment.image_paths.append(_pending_uploaded_path)
             attachment_labels.append(f"image: {label}")
-        elif ext in _AUDIO_EXTS:
+        elif AudioProcessor.is_audio(_pending_uploaded_path):
             attachment.audio_path = _pending_uploaded_path
             attachment_labels.append(f"audio: {label}")
-        elif ext in _VIDEO_EXTS:
-            emit_progress("video", 0.10, "Extracting representative video frames...")
-            frame_paths = extract_video_frames(_pending_uploaded_path)
+        elif VideoProcessor.is_video(_pending_uploaded_path):
+            emit_progress("video", 0.10, f"Extracting {video_frames} representative video frames...")
+            frame_paths = extract_video_frames(_pending_uploaded_path, max_frames=video_frames)
             attachment.video_frame_paths = frame_paths
             attachment_labels.append(f"video: {label} ({len(frame_paths)} frames)")
 
     for _url in pending.get("image_urls", []):
-        attachment.image_urls.append(_url)
-        attachment_labels.append(f"image URL: {_url}")
+        try:
+            _mtype, _resolved = resolve_media_url(_url)
+        except Exception as _dl_err:
+            LOGGER.warning("Failed to resolve URL %s: %s", _url, _dl_err)
+            st.warning(f"Failed to download media from URL: {_dl_err}")
+            continue
+        if _mtype == MediaType.IMAGE:
+            attachment.image_urls.append(_resolved)
+            attachment_labels.append(f"image URL: {_url}")
+        elif _mtype == MediaType.AUDIO and caps.audio:
+            emit_progress("download", 0.08, "Downloaded audio from URL")
+            attachment.audio_path = _resolved
+            attachment_labels.append(f"audio URL: {_url}")
+        elif _mtype == MediaType.VIDEO and caps.video:
+            emit_progress("video", 0.10, f"Extracting {video_frames} video frames from URL...")
+            _frames = extract_video_frames(_resolved, max_frames=video_frames)
+            attachment.video_frame_paths = _frames
+            attachment_labels.append(f"video URL: {_url} ({len(_frames)} frames)")
+        else:
+            st.warning(
+                f"URL skipped — not a recognized media file: `{_url[:80]}`\n\n"
+                "Supported: direct URLs to image (.jpg, .png, .webp), "
+                "audio (.mp3, .wav, .flac), or video (.mp4, .mov) files. "
+                "Streaming URLs (YouTube, etc.) are not supported."
+            )
 
     if pending.get("pasted_image_path"):
         attachment.image_paths.append(Path(pending["pasted_image_path"]))

@@ -196,10 +196,13 @@ The Windows backend also supports on-demand model switching via `POST /models/lo
 | **Multi-GPU** | Tensor parallelism | Not supported |
 | **Adding new models** | Change `MODEL_ID`, restart | May need code changes |
 | **Image understanding** | ✅ | ✅ (no quantization) |
+| **Video (multi-frame) quality** | ⚠️ See note below | ✅ |
 
 **Recommendation:** Use vLLM on Linux or WSL2 for multi-user workloads, Mistral, or AWQ/GPTQ quantization. Use Windows-native on a powerful Windows GPU machine for full single-user inference without any Linux setup.
 
 > Both backends serve identical endpoints: `POST /v1/chat/completions`, `GET /v1/models`, `GET /health`. The UI never knows which backend is running.
+
+> **Video quality observation (April 2026):** When sending 24 video frames (extracted from a 19-second clip), the Windows-native backend (Transformers) produced an accurate description covering all scenes (cooking, deer, elephants, mountains, snow, coastline). The same frames sent to vLLM produced a repetitive description that described only the first scene 14 times. This suggests a difference in how the two backends handle multi-image `apply_chat_template` formatting. Single-image understanding works correctly on both.
 
 ### Performance Results (RTX 3090)
 

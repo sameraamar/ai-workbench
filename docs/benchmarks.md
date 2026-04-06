@@ -282,6 +282,19 @@ For a 100-user interactive service at 64 tokens, you need approximately **50 × 
 - **Model:** Mixed deployment
 - **Strategy:** Batching, speculative decoding, or vLLM/TGI serving engines
 
+### Video (Multi-Frame) Quality Observation
+
+> **Test date:** April 2026, RTX 3090, Gemma 4 E2B, 24 frames from a 19-second video.
+
+When sending 24 evenly-sampled video frames to the model:
+
+| Backend | Result |
+|---|---|
+| **Windows-native (Transformers)** | Accurate description of all scenes: cooking, deer, elephants, mountains, rivers, snow, coastline |
+| **vLLM (WSL2)** | Repetitive description — described only the first scene (cooking/rotisserie) 14 times, barely mentioned later scenes |
+
+Single-image understanding works correctly on both backends. The difference appears to be in how each backend formats multiple images in `apply_chat_template`. This is a known observation, not yet root-caused.
+
 ## Running Benchmarks
 
 ### Prerequisites
