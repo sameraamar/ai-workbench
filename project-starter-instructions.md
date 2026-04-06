@@ -69,9 +69,6 @@ Generate the following documentation‑first structure:
     /research/
         research-notes.md
 
-    /decisions/
-        ADR-0001-initial-architecture.md
-
     /templates/
         TASK-COMPLETION-TEMPLATE.md
         TASK-KICKOFF-TEMPLATE.md

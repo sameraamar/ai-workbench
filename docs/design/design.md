@@ -150,7 +150,7 @@ ai-sandbox/
 2. Model-serving layer (`model-serving/`)
    - Windows-native Transformers-based inference with OpenAI shim
    - `planning/` subpackage contains capacity planning, benchmarking, and simulation utilities
-   - The old Transformers-based package was renamed from `gemma_serving` to `model_serving` (see ADR-0002)
+   - The package was renamed from `gemma_serving` to `model_serving` to be model-agnostic
 
 2. Streamlit UI layer (`ui/`)
    - Collects output mode, prompt, and optional media attachment per turn
@@ -242,7 +242,27 @@ They do not produce pixels, audio waveforms, or rendered video.
 - Cold starts can be lengthy because processor download, model download, and weight loading may all happen on the first request. The UI and logs should report these stages clearly.
 - Local runtime settings should live in `.env`, with `.env.example` as the tracked template. Python path additions should be applied through the environment bootstrap rather than scattered per entrypoint.
 - Adding a second model should only require adding an entry to `model_profiles.py` and setting the `MODEL_ID` in `.env.vllm`. If a change forces UI modifications beyond model_profiles, the architecture needs redesigning first.
-- The backend is dual-mode: vLLM in WSL2 (recommended) or Windows-native Transformers + OpenAI shim. Both expose the same `/v1/chat/completions` API. See [ADR-0003](../decisions/ADR-0003-dual-mode-serving.md).
+- The backend is dual-mode: vLLM in WSL2 (recommended) or Windows-native Transformers + OpenAI shim. Both expose the same `/v1/chat/completions` API.
+
+## Key Architecture Decisions
+
+These decisions shaped the project's current form. They are recorded here for context.
+
+### Documentation-first Python stack
+
+The project uses a documentation-first approach with Python, Streamlit for the UI, and explicit separation between native model capabilities and simulated planning modes. Streamlit is suitable for prototyping but may not be the final product surface. Models that don't natively generate media (images, video, audio) are never presented as if they do.
+
+### Model-agnostic rename
+
+The model-serving package was originally built specifically for Gemma 4 (`gemma_serving`, `GemmaService`, `GEMMA_*` env vars). It was renamed to `model_serving` / `ModelService` / `MODEL_*` to support any model without code changes. The UI resolves models through `model_profiles.py` — adding a new model requires only one registry entry.
+
+### vLLM migration
+
+The hand-rolled Transformers inference stack (~600 lines) reimplemented memory management, batching, and streaming that vLLM already does better. vLLM was adopted as the recommended backend for production-like performance, official Mistral support, PagedAttention (no OOM), and continuous batching. The OpenAI-compatible API (`/v1/chat/completions`) became the universal contract.
+
+### Dual-mode serving
+
+Single repo, single branch, two backend modes selected at start time. The UI speaks the OpenAI API and never knows which backend is running. vLLM (WSL2/Linux) is recommended for benchmarks, Mistral, and multi-GPU. Windows-native (Transformers + OpenAI shim) is kept for quick iteration without WSL2. Both serve on `localhost:8000` — they are alternatives, not meant to run simultaneously.
 
 ## Testing Strategy
 
@@ -269,19 +289,18 @@ The load testing tool supports:
 
 ## Deployment And Operations
 
-The current target is local prototype usage.  Two serving modes are supported
-(see [ADR-0003](../decisions/ADR-0003-dual-mode-serving.md) for rationale):
+The current target is local prototype usage. Two serving modes are available (see Key Architecture Decisions above):
 
 ### Mode 1: vLLM (recommended)
 
 ```powershell
-# One-time WSL2 setup:
-wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/.../vllm-serving && bash setup_vllm.sh"
+# One-time WSL2 setup (from repo root):
+cd vllm-serving
+wsl -e bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
 
 # Start vLLM:
-cd vllm-serving
-.\start_vllm.ps1                           # default model
-.\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+.\start_vllm.ps1                           # default model from .env.vllm
+.\start_vllm.ps1 -Model "org/model-id"     # optional override
 ```
 
 vLLM config lives in `vllm-serving/.env.vllm`.

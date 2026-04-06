@@ -518,7 +518,7 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - Mistral Small 3.1 enabled in `model_profiles.py` (removed from DISABLED_LABELS).
   - All 12 UI tests pass. WSL2 end-to-end pending.
 - Notes:
-  - Decision captured in ADR-0002. Phase A (package rename) deferred; Phase B (vLLM) UI side executed first.
+  - Decision captured in design.md (Key Architecture Decisions). Phase A (package rename) deferred; Phase B (vLLM) UI side executed first.
   - vLLM does not run natively on Windows; WSL2 is required. UI stays on Windows.
   - `start.sh` auto-detects Mistral models and applies `--tokenizer_mode mistral --config_format mistral --load_format mistral`.
   - Old `gemma_serving/` stale directory removed during 3.11 rename.
@@ -542,7 +542,7 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - WSL2 Ubuntu 22.04 verified: vLLM 0.19.0, PyTorch 2.10.0+cu128, CUDA True, RTX 3090.
   - `openai_compat.py` created with `register_openai_routes()`, SSE streaming, message conversion.
   - `test_openai_compat.py` — 7 tests pass. UI tests — 12 pass. Planning/benchmarking — 14 pass.
-  - Decision captured in ADR-0003.
+  - Decision captured in design.md (Key Architecture Decisions).
 - Notes:
   - Single repo, single branch. The only difference is which start script you run.
   - Recommend vLLM for benchmarks and Mistral; Windows-native for quick UI iteration.

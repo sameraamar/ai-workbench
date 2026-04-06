@@ -26,9 +26,10 @@ All communication flows through the [OpenAI-compatible API](https://platform.ope
 - [Playground](#playground)
 - [Quick Start](#quick-start)
 - [Running Tests](#running-tests)
-- [Screenshots](#screenshots)
+- [Demo](#demo)
 - [Future Ideas](#future-ideas)
 - [Documentation Index](#documentation-index)
+- [Appendix A: Supported Models](#appendix-a-supported-models)
 
 ---
 
@@ -45,19 +46,7 @@ ai-workbench/
 
 Each folder has its own `requirements.txt` and `.env.example`. They share nothing at the Python level — no cross-imports, no shared virtualenv.
 
-### Supported Models
-
-| Model | HuggingFace ID | Image | Audio | Video | VRAM | vLLM | Windows-Native |
-|---|---|---|---|---|---|---|---|
-| **Gemma 4 E2B IT** | `google/gemma-4-E2B-it` | ✅ | ✅ | ✅ | ~10 GB | ✅ | ✅ |
-| **Gemma 4 E4B IT** | `google/gemma-4-E4B-it` | ✅ | ✅ | ✅ | ~16 GB | ✅ | ✅ |
-| **Mistral Small 3.1 24B** | `mistralai/Mistral-Small-3.1-24B-Instruct-2503` | ✅ | ❌ | ❌ | ~48 GB | ✅ ¹ | ✅ |
-
-<sup>¹ Mistral Small 3.1 at full precision requires ~48 GB VRAM — needs multi-GPU (tensor parallelism) or an A100/H100 class GPU. Does not fit on a single RTX 3090.</sup>
-
-> **Gemma 4 naming**: The "E" prefix means **Effective** — Gemma 4 uses Mixture of Experts (MoE), where only a fraction of parameters are active per token. "E2B" = 2.3B active params / 5.1B total stored.
->
-> **Using other models:** All models are downloaded from [HuggingFace Hub](https://huggingface.co/models). You can serve any model vLLM supports by passing its HuggingFace ID: `start_vllm.ps1 -Model "org/model-name"`. Community-quantized variants (AWQ, GPTQ) can dramatically reduce VRAM requirements — search HuggingFace for `<model-name> AWQ` — but always test output quality before relying on them, as quantized repacks vary in reliability.
+Three tested models are listed in [Appendix A](#appendix-a-supported-models) with HuggingFace IDs, multimodal capabilities, VRAM requirements, and backend compatibility. Any model [vLLM supports](https://docs.vllm.ai/en/latest/models/supported_models.html) can be served by passing its HuggingFace ID — see [Using other models](#appendix-a-supported-models).
 
 ---
 
@@ -91,15 +80,15 @@ What it installs: vLLM 0.19+, PyTorch with CUDA, and transformers 5.5+ (overridi
 ```powershell
 cd vllm-serving
 
-# Default model (Gemma 4 E2B):
+# Default model (Gemma 4 E2B, from .env.vllm):
 .\start_vllm.ps1
 
-# Override the model:
+# Optional: override the model with -Model (see Appendix A for tested models)
 .\start_vllm.ps1 -Model "google/gemma-4-E4B-it"
-
-# Mistral Small 3.1 (requires multi-GPU or A100+):
-.\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+.\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503"  # requires multi-GPU or A100+
 ```
+
+The `-Model` parameter is **optional** — without it, vLLM loads whatever `MODEL_ID` is set in `.env.vllm` (default: Gemma 4 E2B). See [Appendix A](#appendix-a-supported-models) for tested models.
 
 **Console output:**
 
@@ -132,6 +121,13 @@ cd vllm-serving
 INFO  Resolved architecture: PixtralForConditionalGeneration
 INFO  Using max model len 8192
 INFO  Asynchronous scheduling is enabled.
+...
+...
+(APIServer pid=443) INFO:     Started server process [443]
+(APIServer pid=443) INFO:     Waiting for application startup.
+(APIServer pid=443) INFO:     Application startup complete.
+
+
 ```
 
 **Configuration** lives in [`vllm-serving/.env.vllm`](vllm-serving/.env.vllm):
@@ -413,13 +409,34 @@ copy ui\.env.example ui\.env
 
 ### 3. Start
 
-```powershell
-# Terminal 1 — backend (pick one):
-cd model-serving; .\start_server.ps1          # Windows-native
-cd vllm-serving;  .\start_vllm.ps1            # vLLM via WSL2
+The two backends are **alternatives** — run one or the other, not both. They both serve on port 8000.
 
-# Terminal 2 — UI:
-cd ui; $env:PYTHONPATH="src"; streamlit run app.py
+**Option A — Windows-native** (no WSL2 needed):
+
+```powershell
+# Terminal 1:
+cd model-serving
+.\start_server.ps1
+```
+
+**Option B — vLLM via WSL2** (better performance, requires [one-time WSL2 setup](#option-a-vllm-recommended)):
+
+```powershell
+# Terminal 1:
+cd vllm-serving
+.\start_vllm.ps1                        # loads default model from .env.vllm
+.\start_vllm.ps1 -Model "org/model-id"  # optional (see Appendix A)
+```
+
+Use `-Model` to override the default. See [Appendix A](#appendix-a-supported-models) for tested model IDs.
+
+Then, in a separate terminal, start the UI:
+
+```powershell
+# Terminal 2:
+cd ui
+$env:PYTHONPATH="src"
+streamlit run app.py
 ```
 
 ### WSL2 venv (vLLM only — separate from Windows)
@@ -449,19 +466,11 @@ Tests use fakes and mocks — no GPU or model weights required.
 
 ---
 
-## Screenshots
+## Demo
 
-### Startup — model connected, ready to chat
+Startup → text prompt with run metrics → image upload and visual description:
 
-![Startup state](docs/screenshots/ui-startup.png)
-
-### Text response with run metrics
-
-![Text response](docs/screenshots/ui-text-response.png)
-
-### Image upload and visual description
-
-![Image description](docs/screenshots/ui-image-description.png)
+![AI Workbench demo](docs/screenshots/demo.gif)
 
 ---
 
@@ -489,13 +498,39 @@ Collected from research notes, tasks, and daily use:
 |---|---|
 | [docs/START_HERE.md](docs/START_HERE.md) | Project entrypoint for AI agents and new contributors |
 | [docs/tasks.md](docs/tasks.md) | Task tracking and phase status |
-| [docs/design/design.md](docs/design/design.md) | Architecture, requirements, capability boundaries |
+| [docs/design/design.md](docs/design/design.md) | Architecture, key decisions, capability boundaries |
 | [docs/benchmarks.md](docs/benchmarks.md) | Performance results, load testing, capacity planning |
-| [docs/decisions/ADR-0001](docs/decisions/ADR-0001-initial-architecture.md) | Initial architecture decisions |
-| [docs/decisions/ADR-0002](docs/decisions/ADR-0002-model-serving-refactor-and-vllm-migration.md) | vLLM migration plan |
-| [docs/decisions/ADR-0003](docs/decisions/ADR-0003-dual-mode-serving.md) | Dual-mode serving (vLLM + Windows-native) |
 | [docs/research/gemma4-serving-evaluation.md](docs/research/gemma4-serving-evaluation.md) | Model selection and serving research |
 | [docs/research/low-cost-fastapi-blueprint.md](docs/research/low-cost-fastapi-blueprint.md) | Queue-first FastAPI serving design |
+
+---
+
+## Appendix A: Supported Models
+
+These models are tested and registered in the UI dropdown. Pass any HuggingFace ID to `start_vllm.ps1 -Model` to try others.
+
+| Model | HuggingFace ID | Image | Audio | Video | VRAM (BF16) | vLLM | Windows-Native |
+|---|---|---|---|---|---|---|---|
+| **Gemma 4 E2B IT** | `google/gemma-4-E2B-it` | ✅ | ✅ | ✅ | ~11 GB | ✅ | ✅ |
+| **Gemma 4 E4B IT** | `google/gemma-4-E4B-it` | ✅ | ✅ | ✅ | ~18 GB | ✅ | ✅ |
+| **Gemma 4 26B A4B IT** | `google/gemma-4-26B-A4B-it` | ✅ | ❌ | ✅ | ~52 GB | ✅ | ✅ |
+| **Gemma 4 31B IT** | `google/gemma-4-31B-it` | ✅ | ❌ | ✅ | ~62 GB | ✅ | ✅ |
+| **Mistral Small 3.1 (24B)** | `mistralai/Mistral-Small-3.1-24B-Instruct-2503` | ✅ | ❌ | ❌ | ~48 GB | ✅ | ✅ |
+| **Mistral Small 4 (119B)** ¹ | `mistralai/Mistral-Small-4-119B-2603` | ✅ | ❌ | ❌ | ~238 GB | ✅ | ✅ |
+
+<sup>¹ Mistral Small 4 is registered but disabled in the UI dropdown until verified. Models requiring >24 GB VRAM need multi-GPU (tensor parallelism) or A100/H100 class GPUs.</sup>
+
+> **Gemma 4 naming**: The "E" prefix means **Effective** — Gemma 4 uses Mixture of Experts (MoE), where only a fraction of parameters are active per token. "E2B" = 2.3B active params / 5.1B total stored.
+
+### Using other models
+
+All models are downloaded from [HuggingFace Hub](https://huggingface.co/models). You can serve **any model vLLM supports** by passing its HuggingFace ID:
+
+```powershell
+.\start_vllm.ps1 -Model "org/model-name"
+```
+
+Community-quantized variants (AWQ, GPTQ) can dramatically reduce VRAM requirements — search HuggingFace for `<model-name> AWQ`. Always test output quality before relying on a quantized repack, as they vary in reliability.
 
 ---
 
