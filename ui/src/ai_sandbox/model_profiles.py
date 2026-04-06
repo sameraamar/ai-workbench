@@ -58,10 +58,6 @@ MODEL_PROFILES: dict[str, tuple[str, ModelCapabilities]] = {
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         ModelCapabilities(image=True, audio=False, video=False, vram_gb_bf16=48.0),
     ),
-    "Mistral Small 3.1 AWQ (24B)": (
-        "solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ",
-        ModelCapabilities(image=True, audio=False, video=False, vram_gb_bf16=12.0, vllm_only=True),
-    ),
     "Mistral Small 4 (119B)": (
         "mistralai/Mistral-Small-4-119B-2603",
         ModelCapabilities(image=True, audio=False, video=False, vram_gb_bf16=238.0),

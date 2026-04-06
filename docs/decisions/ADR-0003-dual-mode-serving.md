@@ -125,13 +125,14 @@ All vLLM scripts now live in `vllm-serving/` (sibling to `model-serving/`).
 ### Mode 1: vLLM (recommended for benchmarks and Mistral)
 
 ```powershell
-# One-time setup (from Windows):
-wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/Users/$env:USERNAME/source/repos/ai-workbench/vllm-serving && bash setup_vllm.sh"
+# One-time setup (from the repo root in Windows PowerShell):
+cd vllm-serving
+wsl -e bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
 
 # Start vLLM server:
 cd vllm-serving
 .\start_vllm.ps1                                    # default: Gemma 4 E2B
-.\start_vllm.ps1 -Model "solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ"  # Mistral
+.\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503"  # Mistral
 
 # Start UI (separate terminal):
 cd ui

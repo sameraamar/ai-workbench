@@ -1,353 +1,503 @@
 # AI Workbench
 
-A local-first sandbox for exploring multimodal AI models through text, image, audio, and video understanding workflows, with a serving research toolkit for benchmarking and capacity planning.
+A local-first toolkit for serving and exploring multimodal AI models on your own hardware.
 
-The UI and model-serving backend communicate through a generic `POST /generate` API, so swapping or adding models (Llama, Phi, Mistral, etc.) only requires changes inside `model-serving/`.
+Three independent components work together — or separately:
 
-## Repository Layout
+1. **Model Serving** — Run models locally and expose them as an API
+2. **Sandbox UI** — Chat with your model: text, images, audio, video
+3. **Playground** — Standalone scripts for benchmarks, load tests, and experiments
 
-| Folder | Purpose | Entry point |
-|---|---|---|
-| `vllm-serving/` | vLLM launch scripts and config (WSL2/Linux) | `start_vllm.ps1` or `start.sh` |
-| `model-serving/` | Model-serving backend (Windows-native Transformers), planning subpackage | `start_server.ps1` |
-| `ui/` | Streamlit sandbox UI (calls model-serving over HTTP) | `streamlit run ui/app.py` |
-| `playground/` | Standalone demo and benchmark scripts | Individual `.py` files |
+All communication flows through the [OpenAI-compatible API](https://platform.openai.com/docs/api-reference/chat/create) (`/v1/chat/completions`), so any client, tool, or script that speaks this protocol works out of the box.
 
-Each project has its own `requirements.txt`, `.env.example`, and `PYTHONPATH` root.
+---
 
-## Hardware Recommendations
+## Table of Contents
 
-Gemma 4 inference performance depends heavily on having a CUDA-capable GPU. CPU-only inference is functional but too slow for interactive or production use.
+- [At a Glance](#at-a-glance)
+- [Model Serving](#model-serving)
+  - [Option A: vLLM (Recommended)](#option-a-vllm-recommended)
+  - [Option B: Windows-Native Transformers](#option-b-windows-native-transformers)
+  - [Comparing the Two Backends](#comparing-the-two-backends)
+  - [Performance Results (RTX 3090)](#performance-results-rtx-3090)
+  - [Hardware Guide](#hardware-guide)
+  - [Quantization](#quantization)
+- [Sandbox UI](#sandbox-ui)
+- [Playground](#playground)
+- [Quick Start](#quick-start)
+- [Running Tests](#running-tests)
+- [Screenshots](#screenshots)
+- [Future Ideas](#future-ideas)
+- [Documentation Index](#documentation-index)
 
-### Check Your GPU
+---
 
-Before getting started, verify what GPU (if any) your system has:
-
-| OS | Command |
-|---|---|
-| **Windows (PowerShell)** | `Get-CimInstance Win32_VideoController \| Select-Object Name, AdapterRAM, DriverVersion` |
-| **macOS** | `system_profiler SPDisplaysDataType` |
-| **Linux** | `lspci \| grep -i vga` or `nvidia-smi` (if NVIDIA drivers are installed) |
-
-### Verify PyTorch CUDA Support
-
-After installation, verify that PyTorch can access your GPU:
-
-```bash
-python -c "import torch; print('CUDA Available:', torch.cuda.is_available()); print('GPU Name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
-```
-
-**Expected output with working GPU:**
-```
-CUDA Available: True
-GPU Name: NVIDIA GeForce RTX 3090
-```
-
-If CUDA shows `False`, install CUDA-enabled PyTorch:
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-```
-
-### Measured CPU-Only Baseline
-
-These results were collected on a Windows machine with no CUDA GPU, using default FP32 weights and `max_new_tokens=192`:
-
-| Model | Task | Latency per request |
-|---|---|---|
-| Gemma 4 E2B | Text-only listing rewrite | ~35–43 seconds |
-| Gemma 4 E4B | Text-only listing rewrite | ~77–101 seconds |
-
-**Verdict:** CPU-only inference is usable for offline batch work but not for interactive or multi-user serving.
-
-### Recommended GPU Tiers
-
-**Understanding Gemma 4 model naming:** The "E" prefix means **Effective** — Gemma 4 uses a Mixture of Experts (MoE) architecture where only a fraction of parameters are active per token:
-- **Gemma 4 E2B**: 2.3B effective (active) params · 5.1B total with embeddings (VRAM ~9.5GB)
-- **Gemma 4 E4B**: 4.5B effective (active) params · 8B total with embeddings (VRAM ~16GB+)
-
-The `2B` and `4B` in the names refer to the effective/active parameter count, not the total stored size.
-
-#### Gemma 4 E2B (2.3B effective / 5.1B total)
-
-| GPU | VRAM | Expected text-rewrite latency | Measured Performance | Notes |
-|---|---|---|---|---|
-| NVIDIA RTX 3060 12 GB | 12 GB | 8–15 seconds | Not tested | Tight fit in FP16, may need quantization |
-| NVIDIA RTX 3090 24 GB | 24 GB | 5–10 seconds | **7.65 tok/s avg** ✅ | **Verified performance** (6.7–8.5 range, 3 prompt sizes), comfortable fit |
-| NVIDIA RTX 4060 Ti 16 GB | 16 GB | 6–12 seconds | Not tested | Good fit with some headroom |
-| NVIDIA T4 (cloud) | 16 GB | 10–20 seconds | Not tested | Budget cloud option |
-
-#### Gemma 4 E4B (~8-12B parameters)
-
-| GPU | VRAM | Expected text-rewrite latency | Measured Performance | Notes |
-|---|---|---|---|---|
-| NVIDIA RTX 4070 Ti 12 GB | 12 GB | 15–25 seconds | Not tested | May need 8-bit quantization to fit |
-| NVIDIA RTX 3090 / 4080 | 16–24 GB | 8–15 seconds | Not tested | Should fit comfortably in FP16 |
-| NVIDIA A10G (cloud) | 24 GB | 10–18 seconds | Not tested | Good cloud option, ~$0.75/hr spot |
-| NVIDIA L4 (cloud) | 24 GB | 10–18 seconds | Not tested | Available on GCP, efficient inference card |
-
-#### Gemma 4 26B A4B / 31B (not recommended for low-cost)
-
-These models require 40–80 GB VRAM (A100, H100 class) and are not practical for local or budget deployments.
-
-### Cost-Effective Strategies
-
-1. **Start with E2B on a 12–16 GB GPU.** Validate rewrite quality before investing in larger hardware.
-2. **Use quantization (8-bit or 4-bit)** to fit larger models on smaller GPUs — **text-only tasks only**. ⚠️ Quantization destroys image/multimodal understanding.
-3. **Use cloud GPU spot instances** (Colab T4 free tier, Lambda Labs, RunPod, Vast.ai) for experimentation before buying hardware.
-4. **Reduce `max_new_tokens`** to lower latency. Many listing rewrites complete well under 192 tokens.
-5. **Keep image analysis asynchronous.** Multimodal requests are 2–3× slower than text-only; queue them as background jobs.
-6. **Cache repeated rewrites.** The FastAPI blueprint includes an in-memory cache to avoid re-running identical requests.
-
-### Example Machine Setups
-
-#### Machine A — Laptop (RTX 2000 Ada, 8 GB VRAM)
+## At a Glance
 
 ```
-NVIDIA RTX 2000 Ada Generation Laptop GPU   8 GB VRAM
-AMD Radeon(TM) Graphics                     (integrated, not usable)
+ai-workbench/
+├── model-serving/      # FastAPI backend (Windows-native Transformers)
+├── vllm-serving/       # vLLM launch scripts (WSL2 / Linux)
+├── ui/                 # Streamlit chat UI
+├── playground/         # Standalone benchmark and demo scripts
+└── docs/               # Design docs, ADRs, research notes
 ```
 
-- **Below the 12 GB minimum** for even the smallest model (E2B) in FP16.
-- With **4-bit quantization** (`MODEL_QUANTIZE_4BIT=1`), E2B drops to ~1.5–2 GB VRAM and **fits comfortably** for **text-only tasks**. See [4-Bit Quantization](#4-bit-quantization) below. **⚠️ Image understanding will NOT work with quantization enabled.**
-- E4B in 4-bit (~4–5 GB) is possible but tight — may OOM on longer prompts.
-- Without quantization, this machine is **CPU-only territory** (~35–43 s per rewrite).
+Each folder has its own `requirements.txt` and `.env.example`. They share nothing at the Python level — no cross-imports, no shared virtualenv.
 
-#### Machine B — Desktop (RTX 3090, 24 GB VRAM) ✅ **VERIFIED**
+### Supported Models
 
-```
-NVIDIA GeForce RTX 3090   24 GB VRAM
-Intel(R) UHD Graphics 750 (integrated, not usable)
-```
+| Model | HuggingFace ID | Image | Audio | Video | VRAM | vLLM | Windows-Native |
+|---|---|---|---|---|---|---|---|
+| **Gemma 4 E2B IT** | `google/gemma-4-E2B-it` | ✅ | ✅ | ✅ | ~10 GB | ✅ | ✅ |
+| **Gemma 4 E4B IT** | `google/gemma-4-E4B-it` | ✅ | ✅ | ✅ | ~16 GB | ✅ | ✅ |
+| **Mistral Small 3.1 24B** | `mistralai/Mistral-Small-3.1-24B-Instruct-2503` | ✅ | ❌ | ❌ | ~48 GB | ✅ ¹ | ✅ |
 
-- **✅ Verified Performance**: **7.65 tokens/sec average** for Gemma 4 E2B (2.3B effective / 5.1B total params), range 6.7–8.5 tok/s across prompt sizes
-- **✅ Memory Usage**: 9.6GB VRAM for E2B model in FP16
-- **Ideal for local interactive use** - fits Gemma 4 E4B comfortably with room to spare
-- **No quantization needed** - runs full precision models efficiently
-- Expected text-rewrite latency: **2–5 seconds**.
-- Can also run E2B with headroom for longer contexts or multimodal inputs.
-- No quantization needed.
+<sup>¹ Mistral Small 3.1 at full precision requires ~48 GB VRAM — needs multi-GPU (tensor parallelism) or an A100/H100 class GPU. Does not fit on a single RTX 3090.</sup>
 
-### Minimum Hardware Summary
-
-| Deployment Goal | Minimum GPU | Minimum VRAM | Model |
-|---|---|---|---|
-| Local prototyping | RTX 3060 | 12 GB | E2B |
-| Local interactive use | RTX 3090 / 4080 | 16–24 GB | E4B |
-| Cloud serving (low cost) | T4 / L4 | 16–24 GB | E2B or E4B |
-| Production 100-user serving | Multiple L4 / A10G workers | 24 GB each | E4B |
-
-### GPU Detection & Usage
-
-**No manual flags needed.** The model-serving backend auto-detects CUDA GPUs at load time:
-
-- If `torch.cuda.is_available()` is `True`, models load with `device_map="auto"` and `bfloat16` precision — the GPU is used automatically.
-- If no CUDA GPU is found, models fall back to CPU with `float32`.
-
-**🔧 Advanced GPU Control:** For multi-GPU systems, specific GPU selection, or deployment across different machines, see [GPU Selection Guide](docs/gpu-selection-guide.md).
-
-You can verify CUDA is available before starting the server:
-
-```bash
-# Quick verification using built-in script
-python verify_gpu_config.py
-
-# Or manual check  
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}, Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU\"}')"
-```
-
-If this prints `CUDA available: False` despite having an NVIDIA GPU, ensure you have the correct [PyTorch CUDA build](https://pytorch.org/get-started/locally/) installed (`pip install torch --index-url https://download.pytorch.org/whl/cu124`).
-
-### 4-Bit Quantization
-
-> **⚠️ CRITICAL WARNING: Quantization breaks image/multimodal understanding!**
+> **Gemma 4 naming**: The "E" prefix means **Effective** — Gemma 4 uses Mixture of Experts (MoE), where only a fraction of parameters are active per token. "E2B" = 2.3B active params / 5.1B total stored.
 >
-> NF4 4-bit quantization **destroys the vision tower** on all tested multimodal models.
-> With quantization enabled, the model **cannot see images at all** — it will say
-> "Please provide an image" or hallucinate nonsense ("Pepsi", "ESPN", "epip")
-> instead of describing the actual picture. This was confirmed on both Gemma 4 E2B
-> and Mistral Small 3.1.
->
-> **Only use quantization for pure text workloads on low-VRAM GPUs (<12 GB).**
-> If you need image, audio, or video understanding, keep `MODEL_QUANTIZE_4BIT=0`.
+> **Using other models:** All models are downloaded from [HuggingFace Hub](https://huggingface.co/models). You can serve any model vLLM supports by passing its HuggingFace ID: `start_vllm.ps1 -Model "org/model-name"`. Community-quantized variants (AWQ, GPTQ) can dramatically reduce VRAM requirements — search HuggingFace for `<model-name> AWQ` — but always test output quality before relying on them, as quantized repacks vary in reliability.
 
-The model-serving backend supports NF4 quantization via [bitsandbytes](https://github.com/TimDettmers/bitsandbytes), which reduces VRAM usage by ~4× but **at a severe quality cost for multimodal tasks**. This is how lower-VRAM GPUs (8–12 GB) can run models that would otherwise not fit — **for text-only workloads**.
+---
 
-**Enable it** by setting the `MODEL_QUANTIZE_4BIT` environment variable before starting the server:
+## Model Serving
 
-```powershell
-# PowerShell
-$env:MODEL_QUANTIZE_4BIT = "1"
-uvicorn model_serving.app:app
-```
+This is the core of the repo. Two backends serve the **same OpenAI-compatible API** on `http://localhost:8000`. The UI, playground scripts, and any external client work identically against either one.
 
-```bash
-# bash / zsh
-MODEL_QUANTIZE_4BIT=1 uvicorn model_serving.app:app
-```
+### Option A: vLLM (Recommended)
 
-**Prerequisite:** install `bitsandbytes`:
+**Best for:** production-like performance, Mistral models, benchmarks, multi-GPU setups.
 
-```bash
-pip install bitsandbytes
-```
+vLLM brings PagedAttention (no OOM), continuous batching (concurrent users), native SSE streaming, and AWQ/GPTQ quantization. It runs inside **WSL2** (or native Linux) — it does not run natively on Windows.
 
-**Approximate VRAM usage with 4-bit quantization:**
+**One-time setup:**
 
-| Model | FP16 VRAM | 4-bit NF4 VRAM | Fits on 8 GB GPU? |
-|---|---|---|---|
-| Gemma 4 E2B | ~5–6 GB | ~1.5–2 GB | Yes |
-| Gemma 4 E4B | ~9–10 GB | ~4–5 GB | Tight, may OOM on long prompts |
-
-> **⚠️ Reminder:** These VRAM savings come at the cost of completely broken image understanding. Only use for text-only tasks.
-
-**How it works** (`model_service.py` → `_build_model_load_kwargs`):
-- When `MODEL_QUANTIZE_4BIT=1`, a `BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")` is passed to `from_pretrained()`.
-- Compute dtype remains `bfloat16` on CUDA, so inference math stays in half-precision while weights are stored in 4-bit.
-- `device_map="auto"` still applies — the GPU is used automatically.
-
-### Input Token Limit
-
-Attention memory scales quadratically with input length under the default `sdpa` implementation. To prevent CUDA OOM on unexpectedly long prompts, the server truncates inputs that exceed `MODEL_MAX_INPUT_TOKENS` (default: 8192) and logs a warning. Adjust in `model-serving/.env`:
-
-```dotenv
-# Raise for long-document workflows (24 GB GPU, fp16, sdpa can handle ~16K safely)
-MODEL_MAX_INPUT_TOKENS=16384
-```
-
-**Flash Attention 2** would remove this concern entirely (fused CUDA kernel, true $O(n)$ memory, ~10–30% faster on long sequences), but `flash-attn` has no prebuilt Windows wheels — it requires compiling C++/CUDA from source, which is only practical on Linux/WSL2. On Windows native, SDPA is the best available option and handles typical workloads well.
-
-## Screenshots
-
-### Startup — model connected, empty conversation
-Sidebar shows the active model (**Gemma 4 E2B IT**), system prompt, and generation parameters. The right panel shows **Model Capabilities** (Images ✅ Audio ✅ Video ✅) and the model ready badge. The conversation area starts empty.
-
-![AI Workbench — startup state with Gemma 4 E2B IT connected](docs/screenshots/ui-startup.png)
-
-### Text prompt and response
-User message and assistant reply both appear in the chat window. The **Run History** panel on the right shows Turn 1 metrics: response time, tokens/s, token counts (In/Out/Total), cold-start flag, and a collapsible Full metadata block.
-
-![AI Workbench — text prompt with assistant response and run metrics](docs/screenshots/ui-text-response.png)
-
-### Image upload and visual description
-An image is attached via the **📁 Upload** tab, then described in natural language by the model. The conversation shows two turns (text + image), the attachment label is visible under the user's second message, and the Run History panel shows both Turn 1 and Turn 2 with timing and token stats.
-
-![AI Workbench — image uploaded and described by the model, two-turn run history](docs/screenshots/ui-image-description.png)
-
-## Quick Start
-
-The project uses **two separate virtual environments** that must never be mixed:
-
-| Environment | Location | Contains | Platform |
-|---|---|---|---|
-| **Windows venv** | `venv/` (repo root) | model-serving (Transformers 5.x), UI (Streamlit), playground | Windows |
-| **WSL2 venv** | `~/vllm-env` (inside WSL2) | vLLM only (bundles its own Transformers <5, PyTorch) | WSL2 / Linux |
-
-> **WARNING:** Never install `vllm`, `compressed-tensors`, or `mistral-common` in the Windows venv.
-> These packages pin `transformers<5.0.0`, which downgrades the version needed by model-serving
-> and causes `ImportError: cannot import name 'AutoModelForMultimodalLM'` at runtime.
-
-### Windows venv setup (model-serving + UI)
+vLLM does not run on Windows — it needs a Linux environment. On Windows, [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) provides this. The `setup_vllm.sh` script creates a **separate Python virtualenv inside WSL2** (`~/vllm-env`) and installs vLLM with its own PyTorch+CUDA stack. This venv is completely isolated from your Windows venv — they must never be mixed.
 
 ```powershell
-# 1. Create and activate the venv (Python 3.11+)
-python -m venv venv
-venv\Scripts\Activate.ps1
-
-# 2. Install CUDA-enabled PyTorch FIRST (skip if CPU-only)
-#    Check https://pytorch.org/get-started/locally/ for the latest command.
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-
-# 3. Install project dependencies (both projects share this venv)
-pip install -r model-serving/requirements.txt
-pip install -r ui/requirements.txt
-
-# 4. Copy and configure environment files
-copy model-serving\.env.example model-serving\.env
-# Set MODEL_GATEWAY=model in model-serving/.env to enable real model inference
-# (the default "stub" gateway returns empty responses without loading the model)
-copy ui\.env.example ui\.env
-# Defaults work out-of-box; edit ui/.env only if backend is not at http://localhost:8000
-```
-
-### WSL2 venv setup (vLLM only)
-
-vLLM does not run natively on Windows. It runs inside WSL2 with its own isolated venv.
-
-```powershell
-# From Windows PowerShell — one-time setup:
-wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/Users/$USER/source/repos/ai-workbench/vllm-serving && bash setup_vllm.sh"
-```
-
-This creates `~/vllm-env` inside WSL2 with vLLM and its bundled PyTorch/CUDA stack.
-Do **not** install `model-serving/requirements.txt` inside this venv.
-
-### Starting the backend
-
-Two backend modes serve the same OpenAI-compatible API on `http://localhost:8000`.
-The UI works identically with either one.
-
-```powershell
-# Mode 1: vLLM via WSL2 (recommended — PagedAttention, continuous batching)
+# Option 1 — from the repo root:
 cd vllm-serving
-.\start_vllm.ps1                          # default model from .env.vllm
-.\start_vllm.ps1 -Model "google/gemma-4-E4B-it"   # override model
+wsl -e bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
 
-# Mode 2: Windows-native Transformers + OpenAI shim (no WSL2 required)
+# Option 2 — from anywhere (replace the path if your repo is elsewhere):
+wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/Users/$env:USERNAME/source/repos/ai-workbench/vllm-serving && bash setup_vllm.sh"
+```
+
+What it installs: vLLM 0.19+, PyTorch with CUDA, and transformers 5.5+ (overriding vLLM's `<5` pin for Gemma 4 compatibility). Re-running the script is safe — it reuses the existing venv and only upgrades packages.
+
+**Start the server:**
+
+```powershell
+cd vllm-serving
+
+# Default model (Gemma 4 E2B):
+.\start_vllm.ps1
+
+# Override the model:
+.\start_vllm.ps1 -Model "google/gemma-4-E4B-it"
+
+# Mistral Small 3.1 (requires multi-GPU or A100+):
+.\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+```
+
+**Console output:**
+
+```ini
+# ========================================================
+#   vLLM Model Server
+# ========================================================
+  Model        = mistralai/Mistral-Small-3.1-24B-Instruct-2503
+  Host         = 0.0.0.0
+  Port         = 8000
+  Max tokens   = 8192
+  VRAM util    = 0.90
+  Dtype        = bfloat16
+  Quantization = none
+  TP size      = 1
+  MM limit     = {"image": 10}
+# ========================================================
+  API    = http://0.0.0.0:8000/v1/chat/completions
+  Health = http://0.0.0.0:8000/health
+  Models = http://0.0.0.0:8000/v1/models
+# ========================================================
+```
+```ini
+                                        version 0.19.0
+        █     █     █▄   ▄█
+  ▄▄ ▄█ █     █     █ ▀▄▀ █   model  mistralai/Mistral-Small-3.1-24B-Instruct-2503
+   █▄█▀ █     █     █     █
+    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+
+INFO  Resolved architecture: PixtralForConditionalGeneration
+INFO  Using max model len 8192
+INFO  Asynchronous scheduling is enabled.
+```
+
+**Configuration** lives in [`vllm-serving/.env.vllm`](vllm-serving/.env.vllm):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MODEL_ID` | `google/gemma-4-E2B-it` | HuggingFace model ID |
+| `MAX_MODEL_LEN` | `8192` | Context window (lower = less VRAM) |
+| `GPU_MEMORY_UTILIZATION` | `0.90` | Fraction of VRAM to use |
+| `QUANTIZATION` | `none` | `none`, `awq`, `gptq` |
+| `TENSOR_PARALLEL_SIZE` | `1` | Number of GPUs |
+
+**Why auto-detection?** Mistral models need special vLLM flags (`--tokenizer_mode mistral`, `--config_format mistral`, `--load_format mistral`) that Gemma and other models don't. When `start.sh` sees "mistral" in the model ID, it adds these flags automatically so you don't have to remember them.
+
+### Option B: Windows-Native Transformers
+
+**Best for:** quick UI iteration on Windows, no WSL2 required, low setup friction.
+
+Uses HuggingFace Transformers directly with a FastAPI shim that translates the internal inference engine into OpenAI-compatible endpoints.
+
+**Start the server:**
+
+```powershell
 cd model-serving
 .\start_server.ps1
 ```
 
-### Starting the UI
+**Console output:**
+
+```ini
+# 🚀 Starting Model Server
+# ==================================================
+# ✅ Loaded .env configuration
+  Quantization  = DISABLED
+  Torch Compile = ENABLED
+  Memory Opt    = ENABLED
+  Python path   = C:\...\model-serving\src
+
+# 🌐 Starting FastAPI server on http://127.0.0.1:8000
+#    Press Ctrl+C to stop the server
+# ==================================================
+```
+
+**Configuration** lives in [`model-serving/.env`](model-serving/.env.example):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MODEL_ID` | `google/gemma-4-E2B-it` | HuggingFace model ID |
+| `MODEL_QUANTIZE_4BIT` | `0` | NF4 quantization (text-only! see [Quantization](#quantization)) |
+| `MODEL_TORCH_COMPILE` | `1` | PyTorch compilation |
+| `MODEL_MAX_INPUT_TOKENS` | `8192` | Input truncation limit |
+| `MODEL_GATEWAY` | `model` | `model` = real inference, `stub` = empty responses for testing |
+
+The Windows backend also supports on-demand model switching via `POST /models/load` — the UI sidebar offers a "Load selected model" button when a different model is selected.
+
+### Comparing the Two Backends
+
+| Dimension | vLLM (WSL2 / Linux) | Windows-Native (Transformers) |
+|---|---|---|
+| **Setup** | WSL2 + separate venv | pip install in Windows venv |
+| **Performance** | PagedAttention, continuous batching | Single-request, manual OOM guard |
+| **Concurrent users** | Built-in batching | Serial queue |
+| **Streaming** | Native SSE | Threaded SSE via shim |
+| **Mistral support** | Official, correct (per Mistral AI) | "Not thoroughly tested" (per Mistral AI) |
+| **Quantization** | AWQ, GPTQ built-in | BitsAndBytes NF4 only |
+| **Multi-GPU** | Tensor parallelism | Not supported |
+| **Adding new models** | Change `MODEL_ID`, restart | May need code changes |
+| **Image understanding** | ✅ | ✅ (no quantization) |
+
+**Recommendation:** Use vLLM on Linux or WSL2 for multi-user workloads, Mistral, or AWQ/GPTQ quantization. Use Windows-native on a powerful Windows GPU machine for full single-user inference without any Linux setup.
+
+> Both backends serve identical endpoints: `POST /v1/chat/completions`, `GET /v1/models`, `GET /health`. The UI never knows which backend is running.
+
+### Performance Results (RTX 3090)
+
+All numbers measured on NVIDIA RTX 3090 (24 GB VRAM), April 2026, Gemma 4 E2B, no quantization.
+
+> Mistral Small 3.1 24B requires ~48 GB VRAM at full precision and could not be benchmarked on this machine. It needs multi-GPU or an A100/H100 class GPU.
+
+#### Single-User Throughput
+
+| Metric | Text-Only | Image + Text |
+|---|---|---|
+| **Throughput** | 7.65 tok/s | 4.04 tok/s |
+| **VRAM** | 9.6 GB | 10.6 GB (peak) |
+| **Response time (64 tokens)** | ~8 s | ~16 s |
+| **Response time (256 tokens)** | ~34 s | ~63 s |
+
+#### Concurrent Load (3 users, 120s, Windows-native backend)
+
+| Scenario | Max Tokens | Avg Latency | P95 | RPS |
+|---|---|---|---|---|
+| Short completions | 64 | 41.2 s | 46.6 s | 0.10 |
+| Product descriptions | 96 | 240.7 s | 244.6 s | 0.03 |
+| Conversation mode | 300 | 29.3 s | 32.5 s | 0.11 |
+
+**Key insight:** On a single GPU without batching, latency scales linearly with queue depth. At 3 users, the last user waits $\approx 3 \times T_{\text{per\_request}}$. vLLM's continuous batching improves this significantly.
+
+#### Practical Limits Per GPU (Windows-native)
+
+| Response Length | Max Concurrent Users (≤30 s avg) |
+|---|---|
+| 64 tokens | 2–3 |
+| 96 tokens | 1 |
+| 300 tokens (chat) | 3 |
+| 1024 tokens | 1 |
+
+For multi-user deployments, scale horizontally — adding a second GPU halves queue wait.
+
+> Full methodology, production scenarios, and capacity planning formulas: [docs/benchmarks.md](docs/benchmarks.md)
+
+### Hardware Guide
+
+#### Check Your GPU
 
 ```powershell
-# In a separate terminal (activate the Windows venv first)
+# Windows
+Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM
+
+# Linux
+nvidia-smi
+```
+
+```bash
+# Verify PyTorch sees the GPU
+python -c "import torch; print('CUDA:', torch.cuda.is_available(), '—', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
+
+#### VRAM Requirements
+
+| Model | BF16 VRAM | 4-bit VRAM | Fits RTX 3090? |
+|---|---|---|---|
+| Gemma 4 E2B | ~10 GB | ~2 GB | ✅ |
+| Gemma 4 E4B | ~16 GB | ~5 GB | ✅ |
+| Mistral Small 3.1 24B (BF16) | ~48 GB | — | ❌ multi-GPU or A100 |
+
+#### Recommended Setups
+
+| Budget | GPU | VRAM | What You Can Run |
+|---|---|---|---|
+| **Entry** | RTX 3060 | 12 GB | E2B at BF16, tight fit |
+| **Sweet spot** | RTX 3090 / 4080 | 24 GB | E2B + E4B comfortably, Mistral AWQ |
+| **Cloud** | T4 / L4 / A10G | 16–24 GB | E2B or E4B, spot instances ~$0.50–$1/hr |
+| **Production** | A100 / H100 | 40–80 GB | Any model, multi-user serving |
+
+> No manual GPU flags needed. Both backends auto-detect CUDA and use `device_map="auto"` with `bfloat16`.
+
+### Quantization
+
+Quantization compresses model weights from 16-bit to 4-bit precision, reducing VRAM by roughly 4× — for example, a 48 GB model can shrink to ~14 GB and fit on a consumer GPU.
+
+#### Pre-quantized models via vLLM
+
+Many models on [HuggingFace Hub](https://huggingface.co/models) are available in pre-quantized formats (search for the model name + "AWQ" or "GPTQ"). vLLM can load these directly:
+
+1. Find a quantized variant on HuggingFace
+2. Set `QUANTIZATION=awq` (or `gptq`) in `.env.vllm`
+3. Pass the model ID: `start_vllm.ps1 -Model "org/model-name-AWQ"`
+
+> **Caveat:** Community-quantized models vary in quality. Some have broken tokenizer data or missing files that produce garbage output. Always test before relying on one.
+
+#### NF4 via BitsAndBytes (Windows-native only)
+
+> **⚠️ CRITICAL: NF4 quantization destroys image/multimodal understanding.**
+>
+> With `MODEL_QUANTIZE_4BIT=1`, the model **cannot see images at all**. It will say "Please provide an image" or hallucinate nonsense ("Pepsi", "ESPN") instead of describing the actual picture. Confirmed on both Gemma 4 E2B and Mistral Small 3.1.
+>
+> **Only use for pure text workloads on GPUs with <12 GB VRAM.**
+
+Set `MODEL_QUANTIZE_4BIT=1` in `model-serving/.env`. Reduces VRAM ~4× (E2B: 10 GB → 2 GB).
+
+---
+
+## Sandbox UI
+
+A [Streamlit](https://github.com/streamlit/streamlit) chat interface for interacting with whatever model the backend is serving. The UI has zero model dependencies — just HTTP calls via the OpenAI Python SDK.
+
+**Start:**
+
+```powershell
 cd ui
 $env:PYTHONPATH = "src"
 streamlit run app.py
 ```
 
-### Running tests
+Opens at `http://localhost:8501`. Connects to the backend at `http://localhost:8000` (configurable via `MODEL_SERVING_URL` in `ui/.env`).
+
+### Features
+
+- **Multimodal chat** — Attach images (upload, URL, or clipboard paste), audio, or video to any message
+- **Multi-turn conversation** — Full history sent to the model on every request; follow-up questions work naturally
+- **Model switching** — Dropdown with registered models; Windows-native backend supports hot-swap
+- **Sampling controls** — Temperature, top-p, top-k, max tokens — all adjustable in the sidebar
+- **Streaming** — Token-by-token output via SSE, with toggle for one-shot mode
+- **Run metrics** — Per-turn timing, token counts, tok/s, VRAM usage, cold-start detection
+- **System prompt** — Free-form text area; no preset personas
+- **Code block handling** — Horizontal scroll by default, with a "Wrap code blocks" toggle
+
+The UI is **model-agnostic**. It reads capabilities (image/audio/video support) from a model registry and gates media input controls accordingly. Adding a new model requires one entry in `model_profiles.py` — nothing else changes.
+
+---
+
+## Playground
+
+Standalone scripts for benchmarking, load testing, and quick experiments. No dependency on the UI or model-serving packages.
+
+| Script | Purpose |
+|---|---|
+| `benchmark_runner.py` | Sequential benchmark harness with warmup, timing stats, JSON scenarios |
+| `load_test.py` | Concurrent load testing (10–500+ users, async HTTP, ramp-up, SLA checks) |
+| `concurrency_simulation.py` | Mathematical capacity modeling (users × request rate × latency) |
+| `vllm_gemma4.py` | vLLM smoke test for Gemma 4 (client + offline modes) |
+| `vllm_mistral.py` | vLLM smoke test for Mistral Small 3.1 AWQ |
+| `gemma4_text_demo.py` | Standalone Transformers text demo — one file, zero project deps |
+
+### Load Testing Example
 
 ```powershell
-# All tests (from repo root, Windows venv activated)
+cd playground
+
+# Light load (10 users, 60 seconds)
+python load_test.py load_scenarios.json --concurrent-users 10 --duration 60
+
+# Production stress test
+python load_test.py production_load_scenarios.json --concurrent-users 100 --ramp-up 30
+```
+
+```
+🏁 LOAD TEST RESULTS
+================================================================================
+📊 medium-load-e2b (Gemma 4 E2B)
+   👥 Concurrent Users: 25    ⏱️ Duration: 120s
+   📈 Total Requests: 245     ✅ Success Rate: 98.4%
+   🚀 Requests/sec: 2.04      ⚡ Avg Latency: 4.126s
+   📊 P50/P95/P99: 3.892s / 7.234s / 9.156s
+```
+
+### Capacity Simulation Example
+
+```powershell
+python concurrency_simulation.py --registered-users 100 --active-request-rate 0.1 --multimodal-share 0.2
+```
+
+> Full docs: [playground/README.md](playground/README.md) · Detailed results: [docs/benchmarks.md](docs/benchmarks.md)
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.11+
+- NVIDIA GPU with CUDA (for GPU inference)
+- WSL2 with Ubuntu (for vLLM only)
+
+### 1. Create a Windows venv (model-serving + UI)
+
+```powershell
+python -m venv venv
+venv\Scripts\Activate.ps1
+
+# CUDA-enabled PyTorch (skip for CPU-only)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+# Project dependencies
+pip install -r model-serving/requirements.txt
+pip install -r ui/requirements.txt
+```
+
+### 2. Configure
+
+```powershell
+copy model-serving\.env.example model-serving\.env
+# Edit .env: set MODEL_GATEWAY=model for real inference (default is "stub")
+
+copy ui\.env.example ui\.env
+# Defaults work — edit only if backend isn't at localhost:8000
+```
+
+### 3. Start
+
+```powershell
+# Terminal 1 — backend (pick one):
+cd model-serving; .\start_server.ps1          # Windows-native
+cd vllm-serving;  .\start_vllm.ps1            # vLLM via WSL2
+
+# Terminal 2 — UI:
+cd ui; $env:PYTHONPATH="src"; streamlit run app.py
+```
+
+### WSL2 venv (vLLM only — separate from Windows)
+
+```powershell
+# Option 1 — from the repo root:
+cd vllm-serving
+wsl -e bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
+
+# Option 2 — from anywhere (replace the path if your repo is elsewhere):
+wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/Users/$env:USERNAME/source/repos/ai-workbench/vllm-serving && bash setup_vllm.sh"
+```
+
+> **Never install vLLM in the Windows venv.** It pins `transformers<5.0`, which breaks model-serving.
+
+---
+
+## Running Tests
+
+```powershell
+# All 45 tests (31 model-serving + 14 UI)
 $env:PYTHONPATH = "model-serving\src;ui\src"
 python -m pytest model-serving/tests/ ui/tests/ -v
 ```
 
-## Serving Research Toolkit
+Tests use fakes and mocks — no GPU or model weights required.
 
-The `playground/` directory contains standalone tools for benchmarking and capacity planning:
+---
 
-```bash
-# Run simulated benchmark harness validation
-python playground/benchmark_runner.py model-serving/tests/scenarios.json
+## Screenshots
 
-# Run real Gemma inference benchmarks
-$env:PYTHONPATH = "model-serving\src"   # Windows PowerShell
-python playground/benchmark_runner.py model-serving/docs/scenarios/ebay-listing-benchmarks.json \
-  --target model_serving.planning.benchmark_targets:benchmark_listing_rewrite
+### Startup — model connected, ready to chat
 
-# Run concurrent load testing (10-500+ concurrent users)
-python playground/load_test.py playground/load_scenarios.json --concurrent-users 50 --duration 120
+![Startup state](docs/screenshots/ui-startup.png)
 
-# Run production stress tests
-python playground/load_test.py playground/production_load_scenarios.json --ramp-up 30
+### Text response with run metrics
 
-# Run E2B vs E4B concurrency simulation
-python playground/concurrency_simulation.py --registered-users 100 --active-request-rate 0.1 --multimodal-share 0.2
-```
+![Text response](docs/screenshots/ui-text-response.png)
 
-**See [docs/benchmarks.md](docs/benchmarks.md) for comprehensive performance results, capacity planning guidance, and detailed usage examples.**
+### Image upload and visual description
 
-## Documentation
+![Image description](docs/screenshots/ui-image-description.png)
 
-- [docs/START_HERE.md](docs/START_HERE.md) — Project entrypoint and restart guide
-- [docs/tasks.md](docs/tasks.md) — Task tracking and phase status
-- [docs/benchmarks.md](docs/benchmarks.md) — Performance testing results and capacity planning guidance
-- [docs/gpu-selection-guide.md](docs/gpu-selection-guide.md) — GPU control and multi-system deployment
-- [docs/design/design.md](docs/design/design.md) — Architecture and design decisions
-- [docs/research/gemma4-serving-evaluation.md](docs/research/gemma4-serving-evaluation.md) — Model selection and serving research
-- [docs/research/low-cost-fastapi-blueprint.md](docs/research/low-cost-fastapi-blueprint.md) — Queue-first FastAPI blueprint design
+---
+
+## Future Ideas
+
+Collected from research notes, tasks, and daily use:
+
+- **Token-by-token streaming for multimodal** — Currently, image/audio/video requests use one-shot generation; true SSE streaming would improve perceived latency
+- **Run history persistence** — Save past conversations and metrics to disk for later review
+- **Prompt presets library** — Curated system prompts for common tasks (product descriptions, code review, image analysis)
+- **Flash Attention 2 on Windows** — Would remove the input token limit concern entirely, but `flash-attn` has no prebuilt Windows wheels (Linux/WSL2 only)
+- **Structured output modes** — JSON schema enforcement for attribute extraction, listing generation
+- **Async image analysis** — Queue multimodal requests as background jobs (2–3× slower than text-only)
+- **Response caching** — Avoid re-running identical requests (the FastAPI blueprint includes a cache design)
+- **Cost-of-goods tracking** — Per-request infrastructure cost computation for budget planning
+- **vLLM continuous batching benchmarks** — Compare vLLM concurrent throughput vs Windows-native serial queue on the same hardware
+- **Multi-GPU tensor parallelism** — vLLM supports this natively; untested in this repo
+- **Production deployment guide** — Load balancer, job queue, and multi-worker topology for real multi-user serving
+
+---
+
+## Documentation Index
+
+| Document | Purpose |
+|---|---|
+| [docs/START_HERE.md](docs/START_HERE.md) | Project entrypoint for AI agents and new contributors |
+| [docs/tasks.md](docs/tasks.md) | Task tracking and phase status |
+| [docs/design/design.md](docs/design/design.md) | Architecture, requirements, capability boundaries |
+| [docs/benchmarks.md](docs/benchmarks.md) | Performance results, load testing, capacity planning |
+| [docs/decisions/ADR-0001](docs/decisions/ADR-0001-initial-architecture.md) | Initial architecture decisions |
+| [docs/decisions/ADR-0002](docs/decisions/ADR-0002-model-serving-refactor-and-vllm-migration.md) | vLLM migration plan |
+| [docs/decisions/ADR-0003](docs/decisions/ADR-0003-dual-mode-serving.md) | Dual-mode serving (vLLM + Windows-native) |
+| [docs/research/gemma4-serving-evaluation.md](docs/research/gemma4-serving-evaluation.md) | Model selection and serving research |
+| [docs/research/low-cost-fastapi-blueprint.md](docs/research/low-cost-fastapi-blueprint.md) | Queue-first FastAPI serving design |
+
+---
 
 ## License
 

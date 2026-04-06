@@ -281,7 +281,7 @@ wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/.../vllm-serving && bash setup_vllm.sh
 # Start vLLM:
 cd vllm-serving
 .\start_vllm.ps1                           # default model
-.\start_vllm.ps1 -Model "solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ"
+.\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
 ```
 
 vLLM config lives in `vllm-serving/.env.vllm`.

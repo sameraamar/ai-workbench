@@ -731,6 +731,31 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - 4-bit quantization is only safe for text-only workloads. For multimodal models, leave `MODEL_QUANTIZE_4BIT=0`.
 - Dependencies: 3.17
 
+### 3.19 Rewrite README with three-section structure
+- Status: [x]
+- Started: 2026-04-06
+- Completed: 2026-04-06
+- Included in version:
+- Acceptance criteria:
+  - README reorganized around three clear sections: Model Serving, Sandbox UI, Playground.
+  - Model Serving section covers both backends (vLLM and Windows-native) with configuration tables, console output examples, and comparison matrix.
+  - Performance results (RTX 3090 benchmarks) live under Model Serving, not scattered across unrelated sections.
+  - Hardware guide, VRAM table, and quantization guidance consolidated under Model Serving.
+  - Sandbox UI section is concise — features list, start command, no model internals.
+  - Playground section lists scripts with one-line descriptions and usage examples.
+  - Future ideas collected at the end instead of mixed into operational sections.
+  - Table of contents with anchor links for easy navigation.
+  - All 45 tests pass.
+- Validation:
+  - Old README (355 lines, mixed concerns) replaced entirely with new README (~330 lines, clear hierarchy).
+  - Sections flow: At a Glance → Model Serving (vLLM, Windows-native, comparison, benchmarks, hardware, quantization) → Sandbox UI → Playground → Quick Start → Tests → Screenshots → Future Ideas → Docs Index.
+  - AWQ vs NF4 quantization differences clearly separated under Model Serving.
+  - No cross-references to internal module names or file paths that would confuse non-technical readers.
+- Notes:
+  - Previous README mixed hardware guidance, GPU detection, model architecture, quantization, setup instructions, and internal module details without clear separation.
+  - New structure reflects the actual user journey: choose a backend → configure → start → use UI → run benchmarks.
+- Dependencies: 3.18
+
 ### 9.1 Add persistence for run history
 - Status: [ ]
 - Started:

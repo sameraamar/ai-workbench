@@ -193,7 +193,7 @@ extra_args: []
 
 Example `models/mistral-small-3.1.yaml`:
 ```yaml
-model_id: solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ
+model_id: mistralai/Mistral-Small-3.1-24B-Instruct-2503
 port: 8000
 max_model_len: 32768
 gpu_memory_utilization: 0.92

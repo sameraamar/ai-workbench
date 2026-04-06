@@ -29,8 +29,7 @@ Four supported execution environments, ordered from simplest to most capable.
 ```powershell
 # From repo root
 cd model-serving
-pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 `
-    --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 Copy-Item .env.example .env   # then edit .env for your setup
 ```
@@ -60,23 +59,36 @@ inotify-based hot-reload without leaving your Windows machine.
 
 ### One-time setup
 
+**1. Open a WSL2 terminal from the repo root:**
+
+```powershell
+# In PowerShell, cd to the repo root then enter WSL:
+cd <path-to-ai-workbench>
+wsl
+```
+
+WSL inherits the current directory automatically — `pwd` inside bash will show `/mnt/c/.../<repo>`.
+
+**2. Run the setup commands (inside WSL2 bash):**
+
 ```bash
 # 1. Create venv on the Linux filesystem (NOT under /mnt/c/)
 python3 -m venv ~/venvs/ai-workbench
 source ~/venvs/ai-workbench/bin/activate
 
 # 2. PyTorch with CUDA (Linux wheels, same GPU via WSL2 passthrough)
-pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
-    --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
 
-# 3. Project dependencies (requirements.txt stays on /mnt/c/)
-pip install -r /mnt/c/Users/saaamar/source/repos/ai-workbench/model-serving/requirements.txt
+# 3. Project dependencies (pwd = repo root, inherited from Windows)
+pip install -r "$(pwd)/model-serving/requirements.txt"
 
 # 4. flash-attn — Linux only, optional but recommended
 pip install flash-attn --no-build-isolation
 
 # 5. Reuse the Windows HuggingFace cache — avoids re-downloading large models
-echo 'export HF_HOME=/mnt/c/Users/saaamar/.cache/huggingface' >> ~/.bashrc
+#    (run this from inside WSL2, not from PowerShell)
+WIN_HOME=$(wslpath "$(cmd.exe /C 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')")
+echo "export HF_HOME=${WIN_HOME}/.cache/huggingface" >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -84,7 +96,7 @@ source ~/.bashrc
 
 ```bash
 source ~/venvs/ai-workbench/bin/activate
-cd /mnt/c/Users/saaamar/source/repos/ai-workbench/model-serving
+cd "$(pwd)/model-serving"              # pwd = repo root, inherited from Windows
 ./start_server.sh                   # 127.0.0.1:8000, hot-reload on
 ./start_server.sh --port 8001       # custom port
 ./start_server.sh --no-reload       # disable hot-reload

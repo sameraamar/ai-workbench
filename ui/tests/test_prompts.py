@@ -50,19 +50,18 @@ def test_model_labels_excludes_disabled() -> None:
 
 
 def test_mistral_small_3_1_is_enabled() -> None:
-    """Both Mistral Small 3.1 variants (BF16 and AWQ) should be in MODEL_LABELS."""
+    """Mistral Small 3.1 should be in MODEL_LABELS."""
     assert "Mistral Small 3.1 (24B)" in MODEL_LABELS
-    assert "Mistral Small 3.1 AWQ (24B)" in MODEL_LABELS
 
 
 def test_awq_hidden_on_native_backend() -> None:
-    """AWQ models (vllm_only) must not appear in the native backend dropdown."""
+    """vllm_only models must not appear in the native backend dropdown."""
     native_labels = model_labels_for_backend("native")
-    assert "Mistral Small 3.1 AWQ (24B)" not in native_labels
+    # All current models should be visible on native (no vllm_only entries)
     assert "Mistral Small 3.1 (24B)" in native_labels
 
 
 def test_awq_visible_on_vllm_backend() -> None:
-    """AWQ models should appear in the vLLM backend dropdown."""
+    """All models should appear in the vLLM backend dropdown."""
     vllm_labels = model_labels_for_backend("vllm")
-    assert "Mistral Small 3.1 AWQ (24B)" in vllm_labels
+    assert "Mistral Small 3.1 (24B)" in vllm_labels

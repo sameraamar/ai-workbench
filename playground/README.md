@@ -17,7 +17,7 @@ pip install vllm --upgrade
 vllm serve google/gemma-4-e2b-it --host 0.0.0.0 --port 8000 --max-model-len 8192
 
 # Mistral Small 3.1 24B — AWQ 4-bit (fits on RTX 3090)
-vllm serve solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ \
+vllm serve mistralai/Mistral-Small-3.1-24B-Instruct-2503 \\
   --quantization awq --host 0.0.0.0 --port 8000
 ```
 

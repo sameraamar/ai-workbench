@@ -11,7 +11,7 @@
 .EXAMPLE
     .\start_vllm.ps1
     .\start_vllm.ps1 -Model "google/gemma-4-E4B-it"
-    .\start_vllm.ps1 -Model "solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ" -Port 8001
+    .\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503" -Port 8001
 #>
 param(
     [string]$Model,
@@ -60,5 +60,5 @@ Write-Host "Starting vLLM server via WSL2..." -ForegroundColor Cyan
 Write-Host "Script: $wslScriptDir/start.sh" -ForegroundColor DarkGray
 Write-Host ""
 
-# Make start.sh executable and run it
-wsl -e bash -c "chmod +x '$wslScriptDir/start.sh' && cd '$wslScriptDir' && ${envPrefix}./start.sh"
+# Make start.sh executable, strip Windows CRLF line endings, and run it
+wsl -e bash -c "chmod +x '$wslScriptDir/start.sh' && cd '$wslScriptDir' && sed -i 's/\r$//' start.sh setup_vllm.sh 2>/dev/null; ${envPrefix}./start.sh"

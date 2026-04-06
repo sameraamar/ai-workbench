@@ -57,6 +57,16 @@ LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT:-'{\"image\": 10}'}"
 LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT#\'}"  
 LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT%\'}"
 
+# --- Auto-detect AWQ models (must run before building ARGS) -----------------
+MODEL_LOWER=$(echo "$MODEL_ID" | tr '[:upper:]' '[:lower:]')
+if [[ "$MODEL_LOWER" == *"awq"* ]]; then
+    # AWQ requires float16, not bfloat16
+    DTYPE="float16"
+    if [ "$QUANTIZATION" = "none" ]; then
+        QUANTIZATION="awq"
+    fi
+fi
+
 # --- Build vllm serve arguments ---------------------------------------------
 ARGS=(
     serve "$MODEL_ID"
@@ -75,19 +85,14 @@ if [ "$QUANTIZATION" != "none" ]; then
 fi
 
 # Mistral-specific flags.
-# AWQ community re-packs (e.g. solidrust/*-AWQ) use standard HF safetensors
-# so they only need --tokenizer_mode mistral.  The native mistral loader is
-# only for the official mistralai/* checkpoints in Mistral's own format.
+# The native Mistral loader is needed for official mistralai/* checkpoints.
+# AWQ community re-packs may need different handling (tokenizer compatibility
+# varies — test before relying on any specific AWQ repack).
 MODEL_LOWER=$(echo "$MODEL_ID" | tr '[:upper:]' '[:lower:]')
 if [[ "$MODEL_LOWER" == *"mistral"* ]]; then
     if [[ "$MODEL_LOWER" == *"awq"* ]]; then
         echo "Mistral AWQ model detected — using standard HF loader + mistral tokenizer"
         ARGS+=(--tokenizer_mode mistral)
-        # Force AWQ quantization if not already set.
-        if [ "$QUANTIZATION" = "none" ]; then
-            QUANTIZATION="awq"
-            ARGS+=(--quantization awq)
-        fi
     else
         echo "Mistral model detected — adding mistral-specific loader flags"
         ARGS+=(

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 OUT = Path(__file__).parent        # docs/screenshots/
-IMAGE_PATH = r"C:\Users\saaamar\Downloads\_Image_uu0nwxuu0nwxuu0n.png"
+TEST_IMAGE = OUT / "test-image.png"
 BASE_URL = "http://localhost:8501"
 
 # Viewport that matches a typical 1400px wide browser
@@ -72,56 +72,60 @@ async def scroll_to_top(page):
 async def main():
     from playwright.async_api import async_playwright
 
+    if not TEST_IMAGE.exists():
+        print(f"ERROR: Test image not found at {TEST_IMAGE}")
+        sys.exit(1)
+
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(viewport=VIEWPORT)
-        page = await ctx.new_page()
+            browser = await pw.chromium.launch(headless=True)
+            ctx = await browser.new_context(viewport=VIEWPORT)
+            page = await ctx.new_page()
 
-        # ── Screenshot 1: startup state ──────────────────────────────
-        print("Opening UI…")
-        await page.goto(BASE_URL, wait_until="networkidle")
-        await wait_for_streamlit(page)
-        out1 = OUT / "ui-startup.png"
-        await page.screenshot(path=str(out1), full_page=False)
-        print(f"  ✓ {out1}")
+            # ── Screenshot 1: startup state ──────────────────────────────
+            print("Opening UI…")
+            await page.goto(BASE_URL, wait_until="networkidle")
+            await wait_for_streamlit(page)
+            out1 = OUT / "ui-startup.png"
+            await page.screenshot(path=str(out1), full_page=False)
+            print(f"  ✓ {out1}")
 
-        # ── Screenshot 2: text prompt + response ─────────────────────
-        print("Submitting text prompt…")
-        chat_input = page.locator('[data-testid="stChatInput"] textarea')
-        await chat_input.wait_for(state="visible", timeout=10_000)
-        await chat_input.click()
-        await chat_input.type("Write a one-sentence tagline for a local AI sandbox tool.")
-        await page.keyboard.press("Enter")
-        print("  Waiting for response (may take a while)…")
-        await wait_for_response(page, timeout_ms=180_000)
-        await scroll_to_top(page)
-        out2 = OUT / "ui-text-response.png"
-        await page.screenshot(path=str(out2), full_page=False)
-        print(f"  ✓ {out2}")
+            # ── Screenshot 2: text prompt + response ─────────────────────
+            print("Submitting text prompt…")
+            chat_input = page.locator('[data-testid="stChatInput"] textarea')
+            await chat_input.wait_for(state="visible", timeout=10_000)
+            await chat_input.click()
+            await chat_input.type("Write a one-sentence tagline for a local AI sandbox tool.")
+            await page.keyboard.press("Enter")
+            print("  Waiting for response (may take a while)…")
+            await wait_for_response(page, timeout_ms=180_000)
+            await scroll_to_top(page)
+            out2 = OUT / "ui-text-response.png"
+            await page.screenshot(path=str(out2), full_page=False)
+            print(f"  ✓ {out2}")
 
-        # ── Screenshot 3: image upload + describe ────────────────────
-        print("Uploading image…")
-        # Click the Upload tab to make sure the file uploader is visible
-        upload_tab = page.get_by_text("📁 Upload", exact=True)
-        await upload_tab.click()
-        await asyncio.sleep(0.5)
+            # ── Screenshot 3: image upload + describe ────────────────────
+            print("Uploading image…")
+            # Click the Upload tab to make sure the file uploader is visible
+            upload_tab = page.get_by_text("📁 Upload", exact=True)
+            await upload_tab.click()
+            await asyncio.sleep(0.5)
 
-        file_input = page.locator('[data-testid="stFileUploaderDropzone"] input[type="file"]')
-        await file_input.set_input_files(IMAGE_PATH)
-        await asyncio.sleep(1)   # let Streamlit process the upload
+            file_input = page.locator('[data-testid="stFileUploaderDropzone"] input[type="file"]')
+            await file_input.set_input_files(str(TEST_IMAGE))
+            await asyncio.sleep(1)   # let Streamlit process the upload
 
-        chat_input2 = page.locator('[data-testid="stChatInput"] textarea')
-        await chat_input2.click()
-        await chat_input2.type("Describe what you see in this image in a few sentences.")
-        await page.keyboard.press("Enter")
-        print("  Waiting for image-description response…")
-        await wait_for_response(page, timeout_ms=180_000)
-        await scroll_to_top(page)
-        out3 = OUT / "ui-image-description.png"
-        await page.screenshot(path=str(out3), full_page=False)
-        print(f"  ✓ {out3}")
+            chat_input2 = page.locator('[data-testid="stChatInput"] textarea')
+            await chat_input2.click()
+            await chat_input2.type("Describe what you see in this image in a few sentences.")
+            await page.keyboard.press("Enter")
+            print("  Waiting for image-description response…")
+            await wait_for_response(page, timeout_ms=180_000)
+            await scroll_to_top(page)
+            out3 = OUT / "ui-image-description.png"
+            await page.screenshot(path=str(out3), full_page=False)
+            print(f"  ✓ {out3}")
 
-        await browser.close()
+            await browser.close()
 
     print("\nAll screenshots saved to docs/screenshots/")
 

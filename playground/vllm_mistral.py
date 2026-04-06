@@ -11,8 +11,9 @@ IMPORTANT — VRAM REQUIREMENTS:
   4-bit AWQ: ~14 GB  →  fits on RTX 3090 (24 GB)  ✅
 
 For RTX 3090, use the pre-quantized AWQ checkpoint:
-  Model: "mistralai/Mistral-Small-3.1-24B-Instruct-2503-AWQ"
-  (or any community AWQ quant, e.g. "solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ")
+  Model: "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+  (Note: no reliable AWQ repack is currently available;
+   the full-precision model requires multi-GPU or A100+)
 
 Full precision requires Mistral-specific loader flags:
   --tokenizer_mode mistral --config_format mistral --load_format mistral
@@ -23,14 +24,14 @@ AWQ quants can be loaded with standard vLLM flags + --quantization awq.
 SETUP (run once inside WSL2 or Linux):
   pip install vllm --upgrade
 
-START THE SERVER — AWQ (RTX 3090):
-  vllm serve solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ \\
+START THE SERVER — Full precision (multi-GPU or A100+):
+  vllm serve mistralai/Mistral-Small-3.1-24B-Instruct-2503 \\
     --host 0.0.0.0 --port 8000 \\
-    --quantization awq \\
+    --tokenizer_mode mistral --config_format mistral --load_format mistral \\
     --max-model-len 32768 \\
     --limit_mm_per_prompt image=4
 
-START THE SERVER — Full precision (multi-GPU):
+START THE SERVER — Multi-GPU:
   vllm serve mistralai/Mistral-Small-3.1-24B-Instruct-2503 \\
     --tokenizer_mode mistral --config_format mistral --load_format mistral \\
     --host 0.0.0.0 --port 8000 \\
@@ -53,8 +54,8 @@ import sys
 # ---------------------------------------------------------------------------
 SERVER_URL = "http://localhost:8000"
 
-# For RTX 3090 use the AWQ quant; switch to full-precision ID for multi-GPU
-MODEL_ID   = "solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ"
+# For RTX 3090 the full-precision model won't fit; use multi-GPU or A100+
+MODEL_ID   = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
 # MODEL_ID = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"   # full precision
 
 MODE       = "client"                         # "client" | "offline"
@@ -173,7 +174,7 @@ def run_offline() -> None:
     print("\n=== OFFLINE MODE ===")
     print(f"Loading {MODEL_ID} (this can take several minutes on first run)...")
 
-    is_full_precision = "solidrust" not in MODEL_ID and "AWQ" not in MODEL_ID and "awq" not in MODEL_ID
+    is_full_precision = "AWQ" not in MODEL_ID.upper() and "awq" not in MODEL_ID.lower()
 
     llm_kwargs: dict = {
         "model": MODEL_ID,
@@ -214,7 +215,7 @@ if __name__ == "__main__":
             print(
                 f"[ERROR] vLLM server not reachable at {SERVER_URL}\n"
                 "\nFor RTX 3090 start with:\n"
-                "  vllm serve solidrust/Mistral-Small-3.1-24B-Instruct-2503-AWQ \\\n"
+                "  vllm serve mistralai/Mistral-Small-3.1-24B-Instruct-2503 \\\n"
                 "    --quantization awq --host 0.0.0.0 --port 8000\n"
                 "\nFor full precision (multi-GPU):\n"
                 "  vllm serve mistralai/Mistral-Small-3.1-24B-Instruct-2503 \\\n"
