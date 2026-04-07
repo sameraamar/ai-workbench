@@ -756,6 +756,56 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - New structure reflects the actual user journey: choose a backend → configure → start → use UI → run benchmarks.
 - Dependencies: 3.18
 
+### 3.20 Shared media folder architecture for all file types
+- Status: [x]
+- Started: 2026-04-07
+- Completed: 2026-04-07
+- Included in version:
+- Acceptance criteria:
+  - All uploaded files (images, audio, video) are saved to a single `SHARED_MEDIA_DIR` on disk.
+  - `SHARED_MEDIA_DIR` is configurable via `ui/.env`, `vllm-serving/.env.vllm` (WSL path), and `model-serving/.env` (all three must point to the same folder).
+  - vLLM backend reads all media via `file:///mnt/c/...` URIs — no base64 encoding, no frame extraction.
+  - Native backend reads local images by Windows file path — Transformers `load_image()` opens them directly via PIL (no base64 encoding).
+  - Sidebar shows the configured Windows and WSL paths with a folder-exists indicator.
+  - Sidebar warns when the folder is missing so operators can diagnose misconfiguration before media uploads fail.
+  - Stale `video_frames` slider and unused `extract_video_frames` import removed from `app.py`.
+- Validation:
+  - `ui/src/ai_sandbox/config.py` exports `SHARED_MEDIA_DIR: Path` and `shared_media_dir_wsl()` helper.
+  - `model-serving/src/model_serving/config.py` exports `SHARED_MEDIA_DIR: Path`.
+  - `uploads.py` saves to `SHARED_MEDIA_DIR` with UUID filename (no tempfiles).
+  - `serving_client._to_openai_messages()` dispatches via `_to_file_uri_for_vllm()` for vLLM; `_ensure_local_path_or_url()` for native (path sent directly, not base64).
+  - `_to_file_uri_for_vllm()` converts Windows paths (`C:\foo`) to `file:///mnt/c/foo` WSL URIs; passes through `http(s)://` and `data:` unchanged.
+  - `app.py` imports `SHARED_MEDIA_DIR, shared_media_dir_wsl`; sidebar shows "Shared media folder" expander with exists check.
+  - No errors in `app.py`, `serving_client.py`, or either `config.py`.
+- Notes:
+  - Audio is converted to a `[Audio file: file:///mnt/c/...]` text hint for vLLM (vLLM has no standard audio content type in the OpenAI schema).
+  - If `SHARED_MEDIA_DIR` in `.env` doesn't map to the same mount as in `.env.vllm`, file delivery breaks silently — the sidebar warning surfaces this risk.
+- Dependencies: 3.17, 3.18
+
+### 3.21 Benchmark refresh with shared-media architecture
+- Status: [x]
+- Started: 2026-04-07
+- Completed: 2026-04-07
+- Included in version:
+- Acceptance criteria:
+  - New benchmark scripts (`vllm_benchmark.py`, `native_benchmark.py`) measure text and image scenarios for both backends.
+  - Image scenario uses `file://` URI (vLLM) and local Windows path (native) via shared media folder — no base64.
+  - Results saved to `playground/results.json` with timestamp and backend tag.
+  - README performance section updated with new measurements.
+  - design.md updated with shared-media architecture description and benchmark numbers.
+  - Screenshots and GIF regenerated with updated UI (shared-media sidebar expander visible).
+- Validation:
+  - vLLM (RTX 3090, Gemma 4 E2B, bf16): text 74.7 tok/s, 37 ms TTFT; image 53.9 tok/s, 129 ms TTFT.
+  - Native (RTX 3090, Gemma 4 E2B, bf16): text 6.2 tok/s, 597 ms TTFT; image 6.9 tok/s (35 s TTFT — includes Transformers image preprocessing).
+  - vLLM is ~12× faster in text throughput and ~270× faster in first-image-token latency.
+  - Image scenario confirmed end-to-end: file written to `C:\ai-workbench\shared-media\`, vLLM read via `file:///mnt/c/ai-workbench/shared-media/`, native read via Windows path.
+  - 11 UI screenshots captured + `demo.gif` rebuilt.
+  - `playground/results.json` contains timestamped entries for both backends.
+- Notes:
+  - `start.sh` no longer has a hardcoded default for `SHARED_MEDIA_DIR`; value must come from `.env.vllm` — missing value prints a WARNING and omits the `--allowed-local-media-path` flag.
+  - Native server must be started with the project venv Python (`venv\Scripts\python.exe`) not the system Python; `start_server.ps1` handles this correctly.
+- Dependencies: 3.20
+
 ### 9.1 Add persistence for run history
 - Status: [ ]
 - Started:

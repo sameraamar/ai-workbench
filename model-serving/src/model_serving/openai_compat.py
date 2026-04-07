@@ -77,6 +77,11 @@ def _openai_to_internal_messages(
                 elif btype == "image_url":
                     url = block.get("image_url", {}).get("url", "")
                     parts.append({"type": "image", "url": url})
+                elif btype == "video_path":
+                    # Custom block sent by serving_client.py for native backend.
+                    # Convert to the format Gemma 4's processor expects.
+                    vpath = block.get("video_path", "")
+                    parts.append({"type": "video", "video": vpath})
                 else:
                     parts.append(block)
             converted.append({"role": msg.role, "content": parts})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
+from pathlib import Path
 
 
 def _env(name: str, default: str = "") -> str:
@@ -11,6 +12,11 @@ def _env(name: str, default: str = "") -> str:
 def _env_bool(name: str, default: str = "0") -> bool:
     return _env(name, default).strip().lower() in ("1", "true", "yes")
 
+
+# Shared folder where the UI persists uploads.  The native (Windows) backend
+# reads media files directly from this path — no base64 or temp files needed.
+# Must match SHARED_MEDIA_DIR in ui/.env.
+SHARED_MEDIA_DIR: Path = Path(os.getenv("SHARED_MEDIA_DIR", r"C:\ai-workbench\shared-media"))
 
 DEFAULT_MODEL_ID = _env("MODEL_ID", "google/gemma-4-E2B-it")
 MODEL_CACHE_DIR: str | None = _env("MODEL_CACHE_DIR") or None

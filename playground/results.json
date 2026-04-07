@@ -106,5 +106,165 @@
     "max_latency_seconds": 32.55192470550537,
     "error_rate_percent": 0.0,
     "total_response_bytes": 10896
+  },
+  {
+    "timestamp": "2026-04-07T06:14:01.049096",
+    "backend": "vllm",
+    "model": "google/gemma-4-E2B-it",
+    "server_url": "http://localhost:8000",
+    "scenarios": [
+      {
+        "scenario": "Text \u2013 short (\u226450 tok)",
+        "runs": 3,
+        "avg_latency_s": 2.28,
+        "avg_completion_tokens": 2,
+        "avg_tokens_per_second": 0.88,
+        "avg_ttft_ms": 133.5,
+        "all_latencies_s": [
+          2.443,
+          2.118,
+          2.28
+        ],
+        "all_completion_tokens": [
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "scenario": "Text \u2013 medium (\u2264200 tok)",
+        "runs": 3,
+        "avg_latency_s": 4.08,
+        "avg_completion_tokens": 200,
+        "avg_tokens_per_second": 49.02,
+        "avg_ttft_ms": 42.9,
+        "all_latencies_s": [
+          4.16,
+          4.048,
+          4.033
+        ],
+        "all_completion_tokens": [
+          200,
+          200,
+          200
+        ]
+      },
+      {
+        "scenario": "Text \u2013 long (\u2264500 tok)",
+        "runs": 3,
+        "avg_latency_s": 6.69,
+        "avg_completion_tokens": 500,
+        "avg_tokens_per_second": 74.74,
+        "avg_ttft_ms": 37.0,
+        "all_latencies_s": [
+          6.744,
+          6.589,
+          6.736
+        ],
+        "all_completion_tokens": [
+          500,
+          500,
+          500
+        ]
+      },
+      {
+        "scenario": "Image \u2013 file:// URI (shared media)",
+        "runs": 3,
+        "avg_latency_s": 4.746,
+        "avg_completion_tokens": 256,
+        "avg_tokens_per_second": 53.94,
+        "avg_ttft_ms": 128.9,
+        "all_latencies_s": [
+          4.744,
+          4.882,
+          4.612
+        ],
+        "all_completion_tokens": [
+          256,
+          256,
+          256
+        ]
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-07T07:57:10.081845",
+    "backend": "native",
+    "model": "google/gemma-4-E2B-it",
+    "server_url": "http://localhost:8000",
+    "scenarios": [
+      {
+        "scenario": "Text \u2013 short (\u226420 tok)",
+        "runs": 3,
+        "avg_latency_s": 2.471,
+        "avg_completion_tokens": 1,
+        "avg_tokens_per_second": 0.4,
+        "avg_ttft_ms": 393.5,
+        "all_latencies_s": [
+          2.658,
+          2.31,
+          2.446
+        ],
+        "all_completion_tokens": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "scenario": "Text \u2013 medium (\u2264200 tok)",
+        "runs": 3,
+        "avg_latency_s": 33.786,
+        "avg_completion_tokens": 200,
+        "avg_tokens_per_second": 5.92,
+        "avg_ttft_ms": 435.4,
+        "all_latencies_s": [
+          32.096,
+          32.884,
+          36.38
+        ],
+        "all_completion_tokens": [
+          200,
+          200,
+          200
+        ]
+      },
+      {
+        "scenario": "Text \u2013 long (\u2264500 tok)",
+        "runs": 3,
+        "avg_latency_s": 81.248,
+        "avg_completion_tokens": 500,
+        "avg_tokens_per_second": 6.15,
+        "avg_ttft_ms": 597.2,
+        "all_latencies_s": [
+          75.884,
+          87.587,
+          80.273
+        ],
+        "all_completion_tokens": [
+          500,
+          500,
+          500
+        ]
+      },
+      {
+        "scenario": "Image \u2013 local path (shared media)",
+        "runs": 3,
+        "avg_latency_s": 37.184,
+        "avg_completion_tokens": 256,
+        "avg_tokens_per_second": 6.88,
+        "avg_ttft_ms": 35122.4,
+        "all_latencies_s": [
+          37.655,
+          36.964,
+          36.933
+        ],
+        "all_completion_tokens": [
+          256,
+          256,
+          256
+        ]
+      }
+    ]
   }
 ]

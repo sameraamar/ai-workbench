@@ -30,6 +30,10 @@ class TurnAttachment:
 
     image_paths: list[Path] = field(default_factory=list)
     audio_path: Path | None = None
+    # Native video path — sent directly to the Gemma 4 processor (native backend only).
+    # The processor handles frame sampling, audio track, and context packing internally.
+    video_path: Path | None = None
+    # Fallback for vLLM: evenly-spaced frames extracted by OpenCV.
     video_frame_paths: list[Path] = field(default_factory=list)
     # URL-based inputs — image URLs are passed straight to the processor;
     # audio/video URL download to tmp is handled by the UI layer.
@@ -40,6 +44,7 @@ class TurnAttachment:
         return bool(
             self.image_paths
             or self.audio_path
+            or self.video_path
             or self.video_frame_paths
             or self.image_urls
         )
@@ -80,7 +85,12 @@ class SandboxService:
             current_content.append({"type": "image", "url": url})
         if attachment.audio_path is not None:
             current_content.append({"type": "audio", "audio": attachment.audio_path.as_posix()})
+        if attachment.video_path is not None:
+            # Native backend: pass the video file path directly so the Gemma 4
+            # processor can handle frame sampling and audio internally.
+            current_content.append({"type": "video", "path": attachment.video_path.as_posix()})
         for path in attachment.video_frame_paths:
+            # vLLM fallback: pre-extracted frames sent as individual images.
             current_content.append({"type": "image", "url": path.as_posix()})
         current_content.append({"type": "text", "text": user_prompt})
 

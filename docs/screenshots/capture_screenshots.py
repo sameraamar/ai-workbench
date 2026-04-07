@@ -34,8 +34,8 @@ BASE_URL = "http://localhost:8501"
 GIF_PATH = OUT / "demo.gif"
 
 VIEWPORT = {"width": 1400, "height": 1200}
-HOLD_MS = 3500
-STREAMING_MS = 1200
+HOLD_MS = 1200
+STREAMING_MS = 600
 
 CHAT_SELECTOR = '[data-testid*="Chat"] textarea'
 
