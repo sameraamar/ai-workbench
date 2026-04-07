@@ -2,6 +2,10 @@
 
 A local-first toolkit for serving and exploring multimodal AI models on your own hardware.
 
+Wach this demo here:
+
+![AI Workbench demo](docs/screenshots/demo.gif)
+
 Three independent components work together — or separately:
 
 1. **Model Serving** — Run models locally and expose them as an API
@@ -196,51 +200,53 @@ The Windows backend also supports on-demand model switching via `POST /models/lo
 | **Multi-GPU** | Tensor parallelism | Not supported |
 | **Adding new models** | Change `MODEL_ID`, restart | May need code changes |
 | **Image understanding** | ✅ | ✅ (no quantization) |
-| **Video (multi-frame) quality** | ⚠️ See note below | ✅ |
 
 **Recommendation:** Use vLLM on Linux or WSL2 for multi-user workloads, Mistral, or AWQ/GPTQ quantization. Use Windows-native on a powerful Windows GPU machine for full single-user inference without any Linux setup.
 
 > Both backends serve identical endpoints: `POST /v1/chat/completions`, `GET /v1/models`, `GET /health`. The UI never knows which backend is running.
 
-> **Video quality observation (April 2026):** When sending 24 video frames (extracted from a 19-second clip), the Windows-native backend (Transformers) produced an accurate description covering all scenes (cooking, deer, elephants, mountains, snow, coastline). The same frames sent to vLLM produced a repetitive description that described only the first scene 14 times. This suggests a difference in how the two backends handle multi-image `apply_chat_template` formatting. Single-image understanding works correctly on both.
-
 ### Performance Results (RTX 3090)
 
-All numbers measured on NVIDIA RTX 3090 (24 GB VRAM), April 2026, Gemma 4 E2B, no quantization.
+All numbers measured on NVIDIA RTX 3090 (24 GB VRAM), April 2026, Gemma 4 E2B, no quantization, `bfloat16`.  
+Benchmark scripts: `playground/vllm_benchmark.py` (vLLM) and `playground/native_benchmark.py` (native).  
+Raw results: `playground/results.json`.
 
-> Mistral Small 3.1 24B requires ~48 GB VRAM at full precision and could not be benchmarked on this machine. It needs multi-GPU or an A100/H100 class GPU.
+> Mistral Small 3.1 24B requires ~48 GB VRAM at full precision and could not be benchmarked on this machine.
 
-#### Single-User Throughput
+#### vLLM Backend (WSL2, recommended)
 
-| Metric | Text-Only | Image + Text |
-|---|---|---|
-| **Throughput** | 7.65 tok/s | 4.04 tok/s |
-| **VRAM** | 9.6 GB | 10.6 GB (peak) |
-| **Response time (64 tokens)** | ~8 s | ~16 s |
-| **Response time (256 tokens)** | ~34 s | ~63 s |
+| Scenario | Avg tok/s | TTFT | Latency |
+|---|---|---|---|
+| Text – short | 0.9 | 134 ms | 2.3 s |
+| Text – medium (200 tok) | 49.0 | 43 ms | 4.1 s |
+| Text – long (500 tok) | **74.7** | 37 ms | 6.7 s |
+| Image via `file://` URI | 53.9 | 129 ms | 4.8 s |
 
-#### Concurrent Load (3 users, 120s, Windows-native backend)
+vLLM uses PagedAttention, continuous batching, and CUDA graph capture. Media is served via `file://` URIs from the shared media folder — zero base64 encoding.
 
-| Scenario | Max Tokens | Avg Latency | P95 | RPS |
-|---|---|---|---|---|
-| Short completions | 64 | 41.2 s | 46.6 s | 0.10 |
-| Product descriptions | 96 | 240.7 s | 244.6 s | 0.03 |
-| Conversation mode | 300 | 29.3 s | 32.5 s | 0.11 |
+#### Windows-Native Backend (Transformers + OpenAI shim)
 
-**Key insight:** On a single GPU without batching, latency scales linearly with queue depth. At 3 users, the last user waits $\approx 3 \times T_{\text{per\_request}}$. vLLM's continuous batching improves this significantly.
+| Scenario | Avg tok/s | TTFT | Latency |
+|---|---|---|---|
+| Text – short | 0.4 | 394 ms | 2.5 s |
+| Text – medium (200 tok) | 5.9 | 435 ms | 33.8 s |
+| Text – long (500 tok) | 6.2 | 597 ms | 81.3 s |
+| Image via local path | 6.9 | 35 s\* | 37.2 s |
 
-#### Practical Limits Per GPU (Windows-native)
+\* TTFT includes image preprocessing in the Transformers pipeline (one-shot, no streaming during image decode).
 
-| Response Length | Max Concurrent Users (≤30 s avg) |
-|---|---|
-| 64 tokens | 2–3 |
-| 96 tokens | 1 |
-| 300 tokens (chat) | 3 |
-| 1024 tokens | 1 |
+#### Summary: vLLM vs Native
 
-For multi-user deployments, scale horizontally — adding a second GPU halves queue wait.
+| Metric | vLLM | Native | Speedup |
+|---|---|---|---|
+| Text throughput (500 tok) | 74.7 tok/s | 6.2 tok/s | **~12×** |
+| Image throughput | 53.9 tok/s | 6.9 tok/s | **~8×** |
+| TTFT (text) | 37–43 ms | 394–597 ms | **~10×** |
+| First image token | 129 ms | 35 s | **~270×** |
 
-> Full methodology, production scenarios, and capacity planning formulas: [docs/benchmarks.md](docs/benchmarks.md)
+**Key insight:** vLLM's CUDA graph capture and PagedAttention deliver an order-of-magnitude improvement in both throughput and first-token latency. The shared-media `file://` architecture eliminates all base64 encoding overhead — images and video reach the model as raw file paths.
+
+> Full methodology and raw JSON: `playground/results.json`
 
 ### Hardware Guide
 
@@ -339,6 +345,8 @@ Standalone scripts for benchmarking, load testing, and quick experiments. No dep
 
 | Script | Purpose |
 |---|---|
+| `vllm_benchmark.py` | **vLLM benchmark** — text (short/medium/long) + image via `file://` URI; saves JSON results |
+| `native_benchmark.py` | **Native benchmark** — same scenarios against Windows Transformers backend |
 | `benchmark_runner.py` | Sequential benchmark harness with warmup, timing stats, JSON scenarios |
 | `load_test.py` | Concurrent load testing (10–500+ users, async HTTP, ramp-up, SLA checks) |
 | `concurrency_simulation.py` | Mathematical capacity modeling (users × request rate × latency) |
@@ -466,14 +474,6 @@ python -m pytest model-serving/tests/ ui/tests/ -v
 ```
 
 Tests use fakes and mocks — no GPU or model weights required.
-
----
-
-## Demo
-
-Startup → text prompt with run metrics → image upload and visual description:
-
-![AI Workbench demo](docs/screenshots/demo.gif)
 
 ---
 

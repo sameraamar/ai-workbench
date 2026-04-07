@@ -199,8 +199,30 @@ Each completed run should surface enough metadata to make local comparisons mean
 - Text generation can run in streaming mode (SSE from vLLM) for live feedback or one-shot mode for a single final response.
 - The conversation thread is always active and always sent to the model as `prior_turns`. Every turn’s
   media attachments are embedded in the history as content parts so multimodal follow-ups work naturally.
-- Video files are sampled into representative frames before being sent; the frame paths are embedded in
-  the history alongside the text so subsequent turns can reference the same frames.
+- Video files are passed as native `video_url` blocks (vLLM) or `video_path` blocks (native backend). The shared media folder is used for all media — no frame extraction, no base64 encoding.
+
+### Shared Media Architecture
+
+All uploaded files (images, video, audio) are written to a single **shared media folder** accessible from both:
+
+- **Windows / UI process**: as a Windows path (`C:\ai-workbench\shared-media`), set via `SHARED_MEDIA_DIR` in `ui/.env`
+- **WSL2 / vLLM process**: as the equivalent WSL path (`/mnt/c/ai-workbench/shared-media`), set via `SHARED_MEDIA_DIR` in `vllm-serving/.env.vllm`
+
+This eliminates all base64 encoding. Both backends receive file references:
+- **vLLM**: `file:///mnt/c/ai-workbench/shared-media/<uuid>.png` — requires `--allowed-local-media-path` flag in vLLM, set from `SHARED_MEDIA_DIR` in `start.sh`
+- **Native**: `C:\ai-workbench\shared-media\<uuid>.png` — Transformers `load_image()` opens it directly via PIL
+
+If `SHARED_MEDIA_DIR` is missing from `start.sh`/`start-docker.sh`, a clear WARNING is printed and `--allowed-local-media-path` is omitted, causing vLLM to reject all `file://` URIs.
+
+### Vllm benchmark (RTX 3090, April 2026)
+
+| Scenario | tok/s | TTFT |
+|---|---|---|
+| Text – medium (200 tok) | 49.0 | 43 ms |
+| Text – long (500 tok) | 74.7 | 37 ms |
+| Image via file:// URI | 53.9 | 129 ms |
+
+vLLM is ~12× faster in throughput and ~10× faster in TTFT vs the Windows-native backend.
 
 ### Starter Technology Choices
 

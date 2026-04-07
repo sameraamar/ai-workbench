@@ -4,6 +4,27 @@ Standalone experiments and tools that aren't part of either deployable project.
 
 ## Scripts
 
+### Benchmarks
+
+- **vllm_benchmark.py** — Measures throughput (tok/s), TTFT, and latency against the vLLM backend for text and image scenarios. Images are delivered via `file://` URI through the shared media folder. Results saved to `results.json`.
+- **native_benchmark.py** — Same scenarios against the Windows-native Transformers backend. Images are delivered as local Windows file paths. Results saved to `results.json`.
+
+```bash
+# With vLLM running:
+python playground/vllm_benchmark.py
+
+# With model-serving running:
+python playground/native_benchmark.py
+```
+
+**RTX 3090 results (Gemma 4 E2B, bf16, April 2026):**
+
+| Scenario | vLLM tok/s | Native tok/s | vLLM TTFT |
+|---|---|---|---|
+| Text – medium (200 tok) | 49.0 | 5.9 | 43 ms |
+| Text – long (500 tok) | 74.7 | 6.2 | 37 ms |
+| Image via shared media | 53.9 | 6.9 | 129 ms |
+
 ### vLLM experiments (WSL2 / Linux)
 
 - **vllm_gemma4.py** — Tests Gemma 4 via vLLM in both client mode (talks to a running server) and offline mode (loads model in-process). Covers text, multimodal, and streaming.

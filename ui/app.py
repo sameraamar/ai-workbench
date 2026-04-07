@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import sys
 import tempfile
+import time
 from time import perf_counter
 
 from env_bootstrap import bootstrap_environment
@@ -18,9 +19,9 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ai_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, SERVING_URL
+from ai_sandbox.config import AppConfig, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, GenerationSettings, SERVING_URL, SHARED_MEDIA_DIR, shared_media_dir_wsl
 from ai_sandbox.domain import RunResult
-from ai_sandbox.media import persist_upload, extract_video_frames, ImageProcessor, AudioProcessor, VideoProcessor, resolve_media_url, MediaType
+from ai_sandbox.media import persist_upload, ImageProcessor, AudioProcessor, VideoProcessor, resolve_media_url, MediaType
 from ai_sandbox.model_profiles import MODEL_LABELS, get_capabilities, get_label_for_model_id, get_model_id, model_labels_for_backend
 from ai_sandbox.services.sandbox_service import SandboxService, TurnAttachment
 from ai_sandbox.services.serving_client import _ensure_data_uri_or_url
@@ -135,20 +136,12 @@ def inject_styles() -> None:
             padding-top: 0.35rem;
             border-top: 1px solid rgba(60, 80, 110, 0.10);
         }
-        /* Code blocks: horizontal scroll by default */
-        pre {
-            overflow-x: auto !important;
+        /* Code blocks: always word-wrap */
+        pre, pre code {
+            white-space: pre-wrap !important;
+            word-break: break-word !important;
+            overflow-x: hidden !important;
             max-width: 100% !important;
-        }
-        /* When wrap mode is active, switch to word-wrapping */
-        .wrap-code-blocks pre {
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-            overflow-x: visible !important;
-        }
-        .wrap-code-blocks pre code {
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
         }
         </style>
         """,
@@ -177,6 +170,31 @@ def _make_thumbnail_data_uri(image_path: Path, max_size: int = 80) -> str | None
     if AudioProcessor.matches(image_path):
         return AudioProcessor.make_thumbnail_data_uri(image_path, max_size)
     return ImageProcessor.make_thumbnail_data_uri(image_path, max_size)
+
+
+_BACKEND_CACHE_TTL = 30  # seconds
+
+
+def _get_cached_backend_status() -> tuple[bool, str, str | None]:
+    """Return (is_healthy, backend_mode, active_model_id) cached for 30 s.
+
+    Without caching, every Streamlit rerun (triggered by any sidebar widget)
+    fires 3 blocking HTTP calls, causing a 2-5 s freeze on each interaction.
+    """
+    cache = st.session_state.get("_backend_cache")
+    if cache and (time.monotonic() - cache["ts"]) < _BACKEND_CACHE_TTL:
+        return cache["healthy"], cache["mode"], cache["model"]
+    probe = ServingClient(base_url=SERVING_URL)
+    healthy = probe.is_healthy()
+    mode = probe.detect_backend_mode() if healthy else "vllm"
+    model = probe.get_active_model_id() if healthy else None
+    st.session_state["_backend_cache"] = {
+        "ts": time.monotonic(),
+        "healthy": healthy,
+        "mode": mode,
+        "model": model,
+    }
+    return healthy, mode, model
 
 
 def _conversation_key(*, model_id: str, system_prompt: str) -> str:
@@ -321,14 +339,12 @@ def _render_run_history(ui_history: list[dict]) -> None:
 def main() -> None:
     inject_styles()
 
-    # --- Early backend probe (before sidebar) ---
+    # --- Early backend probe (cached, before sidebar) ---
     # Detect which model the server is actually serving so the dropdown
     # auto-selects it.  vLLM loads ONE model at startup; the dropdown is
     # informational only.  Windows backend can switch models on demand.
-    _probe = ServingClient(base_url=SERVING_URL)
-    _server_healthy = _probe.is_healthy()
-    _backend_mode = _probe.detect_backend_mode() if _server_healthy else "vllm"
-    _active_model: str | None = _probe.get_active_model_id() if _server_healthy else None
+    # Results are cached for 30 s to avoid 2-5 s freezes on every rerun.
+    _server_healthy, _backend_mode, _active_model = _get_cached_backend_status()
     _active_label: str | None = get_label_for_model_id(_active_model) if _active_model else None
     _is_native_backend = _backend_mode == "native"
     _dropdown_labels = model_labels_for_backend(_backend_mode)
@@ -354,11 +370,11 @@ def main() -> None:
             if st.button("🔄 Load selected model", use_container_width=True):
                 with st.spinner(f"Loading {selected_model_label}..."):
                     try:
-                        _probe.load_model(model_id)
+                        _load_client = ServingClient(base_url=SERVING_URL)
+                        _load_client.load_model(model_id)
                         st.success(f"Loaded {selected_model_label}")
-                        # Refresh probe state after load
-                        _active_model = _probe.get_active_model_id()
-                        _active_label = get_label_for_model_id(_active_model) if _active_model else None
+                        # Invalidate cache so status refreshes on next rerun
+                        st.session_state.pop("_backend_cache", None)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to load model: {e}")
@@ -391,23 +407,27 @@ def main() -> None:
                               help="Number of highest-probability tokens to consider at each step.")
         enable_thinking = st.toggle("Enable thinking", value=False)
         stream_output = st.checkbox("Stream text response to UI", value=True)
-        wrap_code = st.checkbox("Wrap code blocks", value=False, help="Toggle word-wrap on code blocks. Off = horizontal scroll.")
-        if caps.video:
-            video_frames = st.slider("Video frames", min_value=2, max_value=10, value=6, step=2,
-                                     help="Number of evenly-spaced frames to extract from uploaded videos. Max 10 (vLLM server limit). More frames = richer understanding but slower inference.")
-        else:
-            video_frames = 6
         st.caption(f"Active model: {_active_model or model_id}")
         st.caption(f"Backend: {'Native (Transformers)' if _is_native_backend else 'vLLM'} · {SERVING_URL}")
-
-    # Apply wrap-code-blocks CSS class toggle via JS
-    _wrap_action = "add" if wrap_code else "remove"
-    _components_html(
-        f"""<script>
-        window.parent.document.querySelector('.stApp').classList.{_wrap_action}('wrap-code-blocks');
-        </script>""",
-        height=0,
-    )
+        # Shared media directory config
+        with st.expander("Shared media folder", expanded=False):
+            _wsl_path = shared_media_dir_wsl()
+            st.caption(f"Windows: `{SHARED_MEDIA_DIR}`")
+            st.caption(f"WSL:     `{_wsl_path}`")
+            _dir_ok = SHARED_MEDIA_DIR.exists()
+            if _dir_ok:
+                st.success("Folder exists ✔", icon="✅")
+            else:
+                st.warning(
+                    f"Folder not found. Create it: `mkdir {SHARED_MEDIA_DIR}`\n\n"
+                    "Until it exists, uploads will fail.",
+                    icon="⚠️",
+                )
+            if not _is_native_backend:
+                st.caption(
+                    "vLLM must also have `SHARED_MEDIA_DIR` set to the WSL path above "
+                    "in `vllm-serving/.env.vllm`. If they differ, file-based media delivery will fail."
+                )
 
     # Use the effective model: on Windows backend the user picks freely;
     # on vLLM the server's model overrides the dropdown.
@@ -658,10 +678,12 @@ def main() -> None:
             attachment.audio_path = _pending_uploaded_path
             attachment_labels.append(f"audio: {label}")
         elif VideoProcessor.is_video(_pending_uploaded_path):
-            emit_progress("video", 0.10, f"Extracting {video_frames} representative video frames...")
-            frame_paths = extract_video_frames(_pending_uploaded_path, max_frames=video_frames)
-            attachment.video_frame_paths = frame_paths
-            attachment_labels.append(f"video: {label} ({len(frame_paths)} frames)")
+            # Both backends: pass the video path directly.
+            # serving_client.py picks the right wire format per backend:
+            #   vLLM   → file:///mnt/c/... URI (WSL reads the Windows file directly)
+            #   native → video_path custom block → openai_compat → Gemma 4 processor
+            attachment.video_path = _pending_uploaded_path
+            attachment_labels.append(f"video: {label}")
 
     for _url in pending.get("image_urls", []):
         try:
@@ -678,10 +700,10 @@ def main() -> None:
             attachment.audio_path = _resolved
             attachment_labels.append(f"audio URL: {_url}")
         elif _mtype == MediaType.VIDEO and caps.video:
-            emit_progress("video", 0.10, f"Extracting {video_frames} video frames from URL...")
-            _frames = extract_video_frames(_resolved, max_frames=video_frames)
-            attachment.video_frame_paths = _frames
-            attachment_labels.append(f"video URL: {_url} ({len(_frames)} frames)")
+            # resolve_media_url always returns a local temp path.
+            # serving_client.py applies the WSL path conversion for vLLM.
+            attachment.video_path = Path(_resolved) if not isinstance(_resolved, Path) else _resolved
+            attachment_labels.append(f"video: {_url}")
         else:
             st.warning(
                 f"URL skipped — not a recognized media file: `{_url[:80]}`\n\n"
@@ -741,6 +763,10 @@ def main() -> None:
             user_content.append({"type": "image", "url": _ensure_data_uri_or_url(url)})
         if attachment.audio_path is not None:
             user_content.append({"type": "audio", "audio": attachment.audio_path.as_posix()})
+        if attachment.video_path is not None:
+            # Store the actual path — the file persists (uploaded files are
+            # not temp-cleaned between turns), so subsequent turns can re-use it.
+            user_content.append({"type": "video", "path": attachment.video_path.as_posix()})
         for path in attachment.video_frame_paths:
             user_content.append({"type": "image", "url": _ensure_data_uri_or_url(path.as_posix())})
         user_content.append({"type": "text", "text": result.prompt_used})

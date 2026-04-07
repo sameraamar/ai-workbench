@@ -27,13 +27,14 @@ class ServingClient:
 
     def __init__(self, base_url: str = DEFAULT_SERVING_URL) -> None:
         self._base_url = base_url.rstrip("/")
-        # The OpenAI client adds /v1 automatically; point it at the bare base URL.
-        # api_key is required by the SDK but irrelevant for local vLLM.
         self._client = OpenAI(
             base_url=f"{self._base_url}/v1",
             api_key="not-needed",
             timeout=GENERATE_TIMEOUT_SECONDS,
         )
+        # Cached after the first generate() call — avoids an extra HTTP round-trip
+        # on every request while still reflecting the actual backend.
+        self._cached_backend_mode: str | None = None
 
     # ------------------------------------------------------------------
     # Health / readiness
@@ -71,11 +72,7 @@ class ServingClient:
         return self.is_healthy()
 
     def detect_backend_mode(self) -> str:
-        """Return ``"native"`` for the FastAPI/Transformers backend or ``"vllm"`` for vLLM.
-
-        Heuristic: the native backend's ``/health`` returns JSON with a ``gateway``
-        key, while vLLM's ``/health`` returns HTTP 200 with an empty body.
-        """
+        """Return ``"native"`` for the FastAPI/Transformers backend or ``"vllm"`` for vLLM."""
         import httpx
 
         try:
@@ -90,6 +87,12 @@ class ServingClient:
                 return "vllm"
         except Exception:
             return "vllm"  # default assumption when unreachable
+
+    def _get_backend_mode(self) -> str:
+        """Return cached backend mode, detecting it on first call."""
+        if self._cached_backend_mode is None:
+            self._cached_backend_mode = self.detect_backend_mode()
+        return self._cached_backend_mode
 
     def load_model(self, model_id: str) -> dict[str, Any]:
         """Ask the Windows backend to load a specific model via ``POST /models/load``."""
@@ -123,7 +126,7 @@ class ServingClient:
         # Resolve model ID — vLLM requires ``model`` in every request.
         resolved_model = model_id or self.get_active_model_id() or "default"
 
-        openai_messages = _to_openai_messages(messages)
+        openai_messages = _to_openai_messages(messages, self._get_backend_mode())
         # Log converted message summary for diagnostics
         for _mi, _m in enumerate(openai_messages):
             _c = _m.get("content")
@@ -275,7 +278,7 @@ class ServingClient:
 # Message format conversion
 # ---------------------------------------------------------------------------
 
-def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _to_openai_messages(messages: list[dict[str, Any]], backend_mode: str = "vllm") -> list[dict[str, Any]]:
     """Convert our internal message format to OpenAI chat API format.
 
     Input format (our internal):
@@ -283,12 +286,15 @@ def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
           {"type": "text", "text": "..."},
           {"type": "image", "url": "..."},
           {"type": "audio", "audio": "..."},
+          {"type": "video", "path": "..."},
       ]}
 
     Output format (OpenAI / vLLM):
       {"role": "user", "content": [
           {"type": "text", "text": "..."},
           {"type": "image_url", "image_url": {"url": "..."}},
+          {"type": "video_url", "video_url": {"url": "file:///mnt/c/..."}},  # vLLM
+          {"type": "video_path", "video_path": "..."},  # native backend
       ]}
 
     For plain string content, pass through as-is.
@@ -309,10 +315,15 @@ def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     parts.append({"type": "text", "text": block.get("text", "")})
                 elif block_type == "image":
                     url = block.get("url", "")
-                    resolved = _ensure_data_uri_or_url(url)
+                    if backend_mode == "vllm":
+                        resolved = _to_file_uri_for_vllm(url)
+                    else:
+                        # Native backend: send local file paths as-is so the
+                        # Transformers processor can call load_image() / PIL.Image.open()
+                        # directly from SHARED_MEDIA_DIR — no base64 encoding needed.
+                        # Only fall back to data: URI for http(s) URLs (no local file).
+                        resolved = _ensure_local_path_or_url(url)
                     if not resolved:
-                        # Stale temp file or empty URL — skip this image
-                        # so the server doesn't receive an unresolvable reference.
                         LOGGER.warning(
                             "Dropping unresolvable image from message: %s",
                             url[:80] if url else "(empty)",
@@ -323,13 +334,27 @@ def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "image_url": {"url": resolved},
                     })
                 elif block_type == "audio":
-                    # vLLM does not have a standard audio content type in
-                    # the OpenAI schema; pass the path as text context for now.
-                    audio_path = block.get("audio", "")
-                    parts.append({
-                        "type": "text",
-                        "text": f"[Audio file attached: {audio_path}]",
-                    })
+                    audio_ref = block.get("audio", "")
+                    if backend_mode == "vllm":
+                        wsl_uri = _to_file_uri_for_vllm(audio_ref)
+                        LOGGER.info("AUDIO: vLLM %s -> %s", audio_ref, wsl_uri)
+                        parts.append({"type": "text", "text": f"[Audio file: {wsl_uri}]"})
+                    else:
+                        parts.append({"type": "text", "text": f"[Audio file attached: {audio_ref}]"})
+                elif block_type == "video":
+                    video_path = block.get("path", "")
+                    if backend_mode == "vllm":
+                        wsl_uri = _to_file_uri_for_vllm(video_path)
+                        LOGGER.info("VIDEO: vLLM %s -> %s", video_path, wsl_uri)
+                        parts.append({
+                            "type": "video_url",
+                            "video_url": {"url": wsl_uri},
+                        })
+                    else:
+                        parts.append({
+                            "type": "video_path",
+                            "video_path": video_path,
+                        })
                 else:
                     # Unknown block type — pass through
                     parts.append(block)
@@ -340,8 +365,73 @@ def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return converted
 
 
+def _to_file_uri_for_vllm(path: str) -> str:
+    """Convert any file reference to a WSL2-accessible file:// URI.
+
+    Works for Windows paths, POSIX paths, and pass-through for existing
+    http(s):// and data: URIs.
+
+    Examples::
+
+        C:\\ai-workbench\\shared-media\\abc.mp4
+            → file:///mnt/c/ai-workbench/shared-media/abc.mp4
+
+        /mnt/c/tmp/foo.png
+            → file:///mnt/c/tmp/foo.png
+
+        https://example.com/img.jpg
+            → https://example.com/img.jpg  (unchanged)
+
+        data:image/png;base64,...
+            → data:image/png;base64,...  (unchanged)
+    """
+    return _windows_path_to_wsl_file_uri(path)
+
+
+def _windows_path_to_wsl_file_uri(path: str) -> str:
+    """Convert a Windows absolute path to a WSL2-accessible file:// URI.
+
+    Examples:
+      C:\\temp\\foo.mp4         -> file:///mnt/c/temp/foo.mp4
+      C:/Users/foo/bar.mp4    -> file:///mnt/c/Users/foo/bar.mp4
+      /tmp/foo.mp4            -> file:///tmp/foo.mp4  (pass-through)
+    """
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    # Already a URI — pass through
+    if path.startswith("file://") or path.startswith("http"):
+        return path
+
+    # Detect Windows path by drive letter (e.g. 'C:' or 'C:/')
+    if len(path) >= 2 and path[1] == ":":
+        drive_letter = path[0].lower()
+        rest = path[2:].replace("\\", "/").lstrip("/")
+        return f"file:///mnt/{drive_letter}/{rest}"
+
+    # Already a POSIX path (e.g. running on Linux natively)
+    return f"file://{path}"
+
+
+def _ensure_local_path_or_url(url: str) -> str:
+    """For the native (Transformers) backend: pass http/data URIs through unchanged;
+    verify that local file paths exist and return them as-is so the server-side
+    Transformers processor can open them via PIL.Image.open() without encoding."""
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("data:"):
+        return url
+    # Local file path — verify existence, then pass directly.
+    path = Path(url)
+    if path.is_file():
+        return url
+    LOGGER.warning("Image file not found, dropping: %s", url)
+    return ""
+
+
 def _ensure_data_uri_or_url(url: str) -> str:
-    """If url is a local file path, convert to a data URI. Otherwise pass through."""
+    """If url is a local file path, convert to a data URI. Otherwise pass through.
+    Kept for backward compatibility; prefer _ensure_local_path_or_url() for native backend."""
+    # Already a URL — pass through
     # Already a URL — pass through
     if url.startswith("http://") or url.startswith("https://") or url.startswith("data:"):
         return url

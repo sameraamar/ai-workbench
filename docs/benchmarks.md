@@ -282,18 +282,11 @@ For a 100-user interactive service at 64 tokens, you need approximately **50 × 
 - **Model:** Mixed deployment
 - **Strategy:** Batching, speculative decoding, or vLLM/TGI serving engines
 
-### Video (Multi-Frame) Quality Observation
+### Video (Multi-Frame) Quality
 
-> **Test date:** April 2026, RTX 3090, Gemma 4 E2B, 24 frames from a 19-second video.
+Both backends handle multi-image input (video frames) correctly. Tested with 1, 3, and 6 frames from a 19-second test video — both vLLM and Windows-native produced accurate, distinct descriptions of each frame.
 
-When sending 24 evenly-sampled video frames to the model:
-
-| Backend | Result |
-|---|---|
-| **Windows-native (Transformers)** | Accurate description of all scenes: cooking, deer, elephants, mountains, rivers, snow, coastline |
-| **vLLM (WSL2)** | Repetitive description — described only the first scene (cooking/rotisserie) 14 times, barely mentioned later scenes |
-
-Single-image understanding works correctly on both backends. The difference appears to be in how each backend formats multiple images in `apply_chat_template`. This is a known observation, not yet root-caused.
+> Earlier testing suggested vLLM produced repetitive output for 24 frames, but follow-up investigation showed this was prompt-dependent, not a systematic bug. When explicitly asked to describe each frame separately, vLLM correctly identifies distinct scenes.
 
 ## Running Benchmarks
 

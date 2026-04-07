@@ -45,17 +45,24 @@ fi
 
 # --- Defaults ---------------------------------------------------------------
 MODEL_ID="${MODEL_ID:-google/gemma-4-E2B-it}"
-VLLM_HOST="${VLLM_HOST:-0.0.0.0}"
+SERVER_HOST="${SERVER_HOST:-0.0.0.0}"
 VLLM_PORT="${VLLM_PORT:-8000}"
+# Unset any VLLM_HOST that leaked from .env so vLLM doesn't warn about it
+unset VLLM_HOST
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 DTYPE="${DTYPE:-bfloat16}"
 QUANTIZATION="${QUANTIZATION:-none}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
-LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT:-'{\"image\": 10}'}"
+LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT:-'{"image": 24, "video": 1}'}"
 # Strip surrounding single quotes that bash source preserves from .env.vllm
-LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT#\'}"  
+LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT#\'}"
 LIMIT_MM_PER_PROMPT="${LIMIT_MM_PER_PROMPT%\'}"
+KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-auto}"
+# Directory that vLLM is allowed to read local files from (file:// URIs).
+# Must be set in .env.vllm — no hardcoded default so a misconfigured
+# server fails clearly rather than silently using the wrong path.
+SHARED_MEDIA_DIR="${SHARED_MEDIA_DIR:-}"
 
 # --- Auto-detect AWQ models (must run before building ARGS) -----------------
 MODEL_LOWER=$(echo "$MODEL_ID" | tr '[:upper:]' '[:lower:]')
@@ -70,7 +77,7 @@ fi
 # --- Build vllm serve arguments ---------------------------------------------
 ARGS=(
     serve "$MODEL_ID"
-    --host "$VLLM_HOST"
+    --host "$SERVER_HOST"
     --port "$VLLM_PORT"
     --max-model-len "$MAX_MODEL_LEN"
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
@@ -82,6 +89,21 @@ ARGS=(
 # Quantization
 if [ "$QUANTIZATION" != "none" ]; then
     ARGS+=(--quantization "$QUANTIZATION")
+fi
+
+# KV cache dtype (fp8 saves ~50% VRAM on Ampere+ GPUs)
+if [ "$KV_CACHE_DTYPE" != "auto" ] && [ -n "$KV_CACHE_DTYPE" ]; then
+    ARGS+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
+fi
+
+# Allow vLLM to load media from the shared folder (required for file:// URIs).
+# Without this flag vLLM refuses file:// URLs with "Cannot load local files
+# without --allowed-local-media-path".
+if [ -n "${SHARED_MEDIA_DIR:-}" ]; then
+    ARGS+=(--allowed-local-media-path "$SHARED_MEDIA_DIR")
+else
+    echo "WARNING: SHARED_MEDIA_DIR is not set in .env.vllm — file:// media will be rejected."
+    echo "         Add: SHARED_MEDIA_DIR=/mnt/c/ai-workbench/shared-media  (or your actual path)"
 fi
 
 # Mistral-specific flags.
@@ -117,7 +139,7 @@ echo "========================================================"
 echo "  vLLM Model Server"
 echo "========================================================"
 echo "  Model:        $MODEL_ID"
-echo "  Host:         $VLLM_HOST"
+echo "  Host:         $SERVER_HOST"
 echo "  Port:         $VLLM_PORT"
 echo "  Max tokens:   $MAX_MODEL_LEN"
 echo "  VRAM util:    $GPU_MEMORY_UTILIZATION"
@@ -125,10 +147,12 @@ echo "  Dtype:        $DTYPE"
 echo "  Quantization: $QUANTIZATION"
 echo "  TP size:      $TENSOR_PARALLEL_SIZE"
 echo "  MM limit:     $LIMIT_MM_PER_PROMPT"
+echo "  KV cache:     $KV_CACHE_DTYPE"
+echo "  Media path:   ${SHARED_MEDIA_DIR:-not set}"
 echo "========================================================"
-echo "  API:  http://${VLLM_HOST}:${VLLM_PORT}/v1/chat/completions"
-echo "  Health: http://${VLLM_HOST}:${VLLM_PORT}/health"
-echo "  Models: http://${VLLM_HOST}:${VLLM_PORT}/v1/models"
+echo "  API:  http://${SERVER_HOST}:${VLLM_PORT}/v1/chat/completions"
+echo "  Health: http://${SERVER_HOST}:${VLLM_PORT}/health"
+echo "  Models: http://${SERVER_HOST}:${VLLM_PORT}/v1/models"
 echo "========================================================"
 echo ""
 
