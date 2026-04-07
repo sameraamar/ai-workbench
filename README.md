@@ -2,7 +2,9 @@
 
 A local-first toolkit for serving and exploring multimodal AI models on your own hardware.
 
-Wach this demo here:
+> **Reference model:** All end-to-end testing, benchmarks, and code validation in this repo were performed using **`google/gemma-4-E2B-it`** on an NVIDIA RTX 3090 (24 GB VRAM). Other registered models (Gemma 4 E4B / 26B / 31B, Mistral Small 3.1 / 4) require more VRAM or multi-GPU — they are wired into the architecture but have not been validated end-to-end on this machine.
+
+Watch this demo here:
 
 ![AI Workbench demo](docs/screenshots/demo.gif)
 

@@ -2,6 +2,8 @@
 
 This document covers all benchmarking capabilities, testing methodologies, and performance results for the AI Workbench project.
 
+> **Reference model:** All benchmarks and measurements in this document were performed using **`google/gemma-4-E2B-it`** on an NVIDIA RTX 3090 (24 GB VRAM), April 2026, no quantization, `bfloat16`. Other registered models have not been benchmarked on this machine.
+
 ## Overview
 
 The project includes multiple benchmarking approaches to validate performance, capacity, and production readiness:
