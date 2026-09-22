@@ -806,6 +806,29 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
   - Native server must be started with the project venv Python (`venv\Scripts\python.exe`) not the system Python; `start_server.ps1` handles this correctly.
 - Dependencies: 3.20
 
+### 3.22 Add Windows Docker Desktop onboarding for vLLM
+- Status: [x]
+- Started: 2026-09-22
+- Completed: 2026-09-22
+- Included in version:
+- Acceptance criteria:
+  - Windows users can launch vLLM through Docker Desktop without installing an Ubuntu WSL distribution.
+  - The PowerShell launcher validates the Docker engine, Linux-container mode, NVIDIA runtime, port availability, and Windows-to-container cache/media mounts.
+  - The WSL launcher requires an explicit normal Linux distribution and explains that `docker-desktop` is not a usable Ubuntu environment.
+  - README documents prerequisites, hardware fit, both launch routes, API verification, and complete server/Docker/WSL shutdown commands.
+- Validation:
+  - Docker Desktop 29.6.2 engine verified in Linux-container mode with the `nvidia` runtime available.
+  - CUDA container smoke test detected `NVIDIA RTX 2000 Ada Generation Laptop GPU` with 8188 MiB VRAM.
+  - `start-docker.ps1 -Model Qwen/Qwen2.5-0.5B-Instruct -DryRun` produced correct host cache and shared-media mounts for the current checkout.
+  - With Docker Desktop stopped, `start-docker.ps1 -DryRun` exits before launch with the intended start-Docker prerequisite message.
+  - `start_vllm.ps1 -Distribution Ubuntu-22.04` now fails early with the Ubuntu install command and Docker launcher alternative when only `docker-desktop` exists.
+  - Live vLLM image download was started successfully, then intentionally stopped before API startup at the user's request to conserve battery; full `/health` inference validation was not run.
+  - Docker Desktop and its WSL VM were shut down; ports 8000 and 8501 had no listeners afterward.
+- Notes:
+  - The repo default Gemma 4 E2B BF16 model does not fit this 8 GB GPU. README uses ungated `Qwen/Qwen2.5-0.5B-Instruct` for the first runtime smoke test.
+  - Docker Desktop's internal `docker-desktop` WSL distribution is an implementation detail, not a replacement for Ubuntu when using `setup_vllm.sh`.
+- Dependencies: 3.17, 3.20
+
 ### 9.1 Add persistence for run history
 - Status: [ ]
 - Started:

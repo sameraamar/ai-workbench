@@ -44,7 +44,7 @@ All communication flows through the [OpenAI-compatible API](https://platform.ope
 ```
 ai-workbench/
 ├── model-serving/      # FastAPI backend (Windows-native Transformers)
-├── vllm-serving/       # vLLM launch scripts (WSL2 / Linux)
+├── vllm-serving/       # vLLM launch scripts (Docker Desktop / WSL2 / Linux)
 ├── ui/                 # Streamlit chat UI
 ├── playground/         # Standalone benchmark and demo scripts
 └── docs/               # Design docs, ADRs, research notes
@@ -64,37 +64,119 @@ This is the core of the repo. Two backends serve the **same OpenAI-compatible AP
 
 **Best for:** production-like performance, Mistral models, benchmarks, multi-GPU setups.
 
-vLLM brings PagedAttention (no OOM), continuous batching (concurrent users), native SSE streaming, and AWQ/GPTQ quantization. It runs inside **WSL2** (or native Linux) — it does not run natively on Windows.
+vLLM is Linux software and does not run natively on Windows. On Windows, run it through Docker Desktop or a normal Ubuntu WSL2 distribution. These are alternatives; do not install vLLM in the Windows Python virtualenv.
 
-**One-time setup:**
+#### Prerequisites
 
-vLLM does not run on Windows — it needs a Linux environment. On Windows, [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) provides this. The `setup_vllm.sh` script creates a **separate Python virtualenv inside WSL2** (`~/vllm-env`) and installs vLLM with its own PyTorch+CUDA stack. This venv is completely isolated from your Windows venv — they must never be mixed.
+- Windows 10/11 with WSL2 support and hardware virtualization enabled
+- An NVIDIA GPU, a current NVIDIA Windows driver with WSL2 CUDA support, and enough VRAM for the selected model
+- Docker Desktop using Linux containers **or** a normal Ubuntu WSL2 distribution
+- Enough disk for the vLLM runtime and model weights; tens of GB is normal
+- Accepted model terms and an `HF_TOKEN` for gated models such as Gemma 4
 
-```powershell
-# Option 1 — from the repo root:
-cd vllm-serving
-wsl -e bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
+> `docker-desktop` in `wsl -l -v` is Docker Desktop's internal distribution. It is **not** an Ubuntu installation and cannot be used with `wsl -d Ubuntu-22.04` or `setup_vllm.sh`.
 
-# Option 2 — from anywhere (replace the path if your repo is elsewhere):
-wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/Users/$env:USERNAME/source/repos/ai-workbench/vllm-serving && bash setup_vllm.sh"
-```
-
-What it installs: vLLM 0.19+, PyTorch with CUDA, and transformers 5.5+ (overriding vLLM's `<5` pin for Gemma 4 compatibility). Re-running the script is safe — it reuses the existing venv and only upgrades packages.
-
-**Start the server:**
+For Docker Desktop, validate the engine and GPU path first:
 
 ```powershell
-cd vllm-serving
-
-# Default model (Gemma 4 E2B, from .env.vllm):
-.\start_vllm.ps1
-
-# Optional: override the model with -Model (see Appendix A for tested models)
-.\start_vllm.ps1 -Model "google/gemma-4-E4B-it"
-.\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503"  # requires multi-GPU or A100+
+docker version --format "Server={{.Server.Version}}; OS={{.Server.Os}}"
+docker info | Select-String "Runtimes"
+docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
 ```
 
-The `-Model` parameter is **optional** — without it, vLLM loads whatever `MODEL_ID` is set in `.env.vllm` (default: Gemma 4 E2B). See [Appendix A](#appendix-a-supported-models) for tested models.
+The final command must show the NVIDIA GPU from inside the container.
+
+#### Route 1: Docker Desktop on Windows
+
+Start Docker Desktop and wait until its engine reports **Running**. Then start with a small, ungated model. It fits an 8 GB GPU and proves the runtime before downloading a larger checkpoint:
+
+```powershell
+cd vllm-serving
+$mediaPath = Join-Path (Resolve-Path ..).Path "shared-media"
+.\start-docker.ps1 -Model "Qwen/Qwen2.5-0.5B-Instruct" -SharedMediaDir $mediaPath
+```
+
+The first launch downloads the vLLM image and model weights, so it can take several minutes. Keep the terminal open while the server runs.
+
+The repository default, `google/gemma-4-E2B-it`, needs roughly 11 GB of VRAM at BF16 plus runtime headroom. It does not fit an 8 GB GPU in this configuration. On a GPU with sufficient VRAM, omit `-Model`:
+
+```powershell
+.\start-docker.ps1 -SharedMediaDir $mediaPath
+```
+
+For a larger model on limited VRAM, use a vLLM-compatible pre-quantized AWQ/GPTQ checkpoint and set the matching `QUANTIZATION`. Setting `QUANTIZATION=awq` does not quantize a full-precision checkpoint by itself.
+
+#### Route 2: Ubuntu on WSL2
+
+Install a real Ubuntu distribution from an elevated PowerShell window, restart if requested, and complete Ubuntu's first-launch username setup:
+
+```powershell
+wsl --list --online
+wsl --install -d Ubuntu-22.04
+wsl -l -v
+```
+
+`wsl -l -v` must list `Ubuntu-22.04` with `VERSION` 2. Then run the one-time setup from the repository's `vllm-serving` directory:
+
+```powershell
+cd vllm-serving
+wsl -d Ubuntu-22.04 -- bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
+
+# Use a small model on an 8 GB GPU:
+.\start_vllm.ps1 -Distribution "Ubuntu-22.04" -Model "Qwen/Qwen2.5-0.5B-Instruct"
+```
+
+`setup_vllm.sh` creates `~/vllm-env` inside Ubuntu and installs vLLM, CUDA-enabled PyTorch, and the Transformers version needed by Gemma 4. Both launchers accept `-Model`; without it, they load `MODEL_ID` from `.env.vllm`.
+
+#### Verify the API
+
+Wait for `Application startup complete`, then use another PowerShell terminal:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+$models = Invoke-RestMethod http://localhost:8000/v1/models
+$activeModel = $models.data[0].id
+
+$body = @{
+  model = $activeModel
+  messages = @(@{ role = "user"; content = "Reply with exactly: vLLM is running" })
+  max_tokens = 32
+} | ConvertTo-Json -Depth 5
+
+(Invoke-RestMethod http://localhost:8000/v1/chat/completions `
+  -Method Post -ContentType "application/json" -Body $body).choices[0].message.content
+```
+
+#### Stop and Shut Down
+
+Press `Ctrl+C` in the launcher terminal to stop vLLM. For a Docker launch, this stops and removes the `vllm-server` container because it was started with `--rm`. From another PowerShell terminal, the equivalent command is:
+
+```powershell
+docker stop vllm-server
+```
+
+Stopping the container releases GPU memory, but Docker Desktop can keep its WSL2 VM running. To conserve power and memory, shut down Docker Desktop completely:
+
+```powershell
+docker desktop stop
+wsl --shutdown
+```
+
+`wsl --shutdown` stops **all** WSL distributions, including Ubuntu. Omit it if another WSL workload must remain running. If the installed Docker Desktop version does not support `docker desktop stop`, choose **Quit Docker Desktop** from its system-tray menu, then run `wsl --shutdown`.
+
+For the Ubuntu WSL route, `Ctrl+C` stops vLLM. To stop that distribution afterward:
+
+```powershell
+wsl --terminate Ubuntu-22.04
+```
+
+Confirm that the API and UI ports are no longer listening:
+
+```powershell
+Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+  Where-Object LocalPort -In 8000,8501
+wsl -l -v
+```
 
 **Console output:**
 
@@ -145,6 +227,9 @@ INFO  Asynchronous scheduling is enabled.
 | `GPU_MEMORY_UTILIZATION` | `0.90` | Fraction of VRAM to use |
 | `QUANTIZATION` | `none` | `none`, `awq`, `gptq` |
 | `TENSOR_PARALLEL_SIZE` | `1` | Number of GPUs |
+| `HF_TOKEN` | empty | Hugging Face token for gated/private models |
+| `SHARED_MEDIA_DIR` | `/mnt/c/ai-workbench/shared-media` | Linux container/WSL path matching the UI's Windows media folder |
+| `VLLM_IMAGE` | `vllm/vllm-openai:latest` | Docker image used by the Docker launchers |
 
 **Why auto-detection?** Mistral models need special vLLM flags (`--tokenizer_mode mistral`, `--config_format mistral`, `--load_format mistral`) that Gemma and other models don't. When `start.sh` sees "mistral" in the model ID, it adds these flags automatically so you don't have to remember them.
 
@@ -191,9 +276,9 @@ The Windows backend also supports on-demand model switching via `POST /models/lo
 
 ### Comparing the Two Backends
 
-| Dimension | vLLM (WSL2 / Linux) | Windows-Native (Transformers) |
+| Dimension | vLLM (Docker / WSL2 / Linux) | Windows-Native (Transformers) |
 |---|---|---|
-| **Setup** | WSL2 + separate venv | pip install in Windows venv |
+| **Setup** | Docker Desktop, or Ubuntu WSL2 + separate venv | pip install in Windows venv |
 | **Performance** | PagedAttention, continuous batching | Single-request, manual OOM guard |
 | **Concurrent users** | Built-in batching | Serial queue |
 | **Streaming** | Native SSE | Threaded SSE via shim |
@@ -203,7 +288,7 @@ The Windows backend also supports on-demand model switching via `POST /models/lo
 | **Adding new models** | Change `MODEL_ID`, restart | May need code changes |
 | **Image understanding** | ✅ | ✅ (no quantization) |
 
-**Recommendation:** Use vLLM on Linux or WSL2 for multi-user workloads, Mistral, or AWQ/GPTQ quantization. Use Windows-native on a powerful Windows GPU machine for full single-user inference without any Linux setup.
+**Recommendation:** Use vLLM through Docker Desktop, WSL2, or Linux for multi-user workloads, Mistral, or AWQ/GPTQ quantization. Use Windows-native on a powerful Windows GPU machine for full single-user inference without a Linux runtime.
 
 > Both backends serve identical endpoints: `POST /v1/chat/completions`, `GET /v1/models`, `GET /health`. The UI never knows which backend is running.
 
@@ -286,6 +371,8 @@ python -c "import torch; print('CUDA:', torch.cuda.is_available(), '—', torch.
 
 > No manual GPU flags needed. Both backends auto-detect CUDA and use `device_map="auto"` with `bfloat16`.
 
+An 8 GB GPU is enough for a small vLLM smoke-test model such as Qwen 2.5 0.5B, but not for this repo's default Gemma 4 E2B BF16 configuration.
+
 ### Quantization
 
 Quantization compresses model weights from 16-bit to 4-bit precision, reducing VRAM by roughly 4× — for example, a 48 GB model can shrink to ~14 GB and fit on a consumer GPU.
@@ -296,7 +383,7 @@ Many models on [HuggingFace Hub](https://huggingface.co/models) are available in
 
 1. Find a quantized variant on HuggingFace
 2. Set `QUANTIZATION=awq` (or `gptq`) in `.env.vllm`
-3. Pass the model ID: `start_vllm.ps1 -Model "org/model-name-AWQ"`
+3. Pass the model ID to `start-docker.ps1 -Model "org/model-name-AWQ"` or `start_vllm.ps1 -Model "org/model-name-AWQ"`
 
 > **Caveat:** Community-quantized models vary in quality. Some have broken tokenizer data or missing files that produce garbage output. Always test before relying on one.
 
@@ -393,8 +480,9 @@ python concurrency_simulation.py --registered-users 100 --active-request-rate 0.
 ### Prerequisites
 
 - Python 3.11+
-- NVIDIA GPU with CUDA (for GPU inference)
-- WSL2 with Ubuntu (for vLLM only)
+- NVIDIA GPU with a current driver and enough VRAM for the selected model
+- Docker Desktop **or** Ubuntu on WSL2 for vLLM; neither is required for the Windows-native backend
+- Hugging Face access and a token for gated models
 
 ### 1. Create a Windows venv (model-serving + UI)
 
@@ -432,16 +520,24 @@ cd model-serving
 .\start_server.ps1
 ```
 
-**Option B — vLLM via WSL2** (better performance, requires [one-time WSL2 setup](#option-a-vllm-recommended)):
+**Option B — vLLM via Docker Desktop** (better performance, no Ubuntu distribution required):
 
 ```powershell
 # Terminal 1:
 cd vllm-serving
-.\start_vllm.ps1                        # loads default model from .env.vllm
-.\start_vllm.ps1 -Model "org/model-id"  # optional (see Appendix A)
+$mediaPath = Join-Path (Resolve-Path ..).Path "shared-media"
+.\start-docker.ps1 -Model "Qwen/Qwen2.5-0.5B-Instruct" -SharedMediaDir $mediaPath
 ```
 
-Use `-Model` to override the default. See [Appendix A](#appendix-a-supported-models) for tested model IDs.
+**Option C — vLLM via Ubuntu WSL2** (requires the [one-time Ubuntu setup](#route-2-ubuntu-on-wsl2)):
+
+```powershell
+# Terminal 1:
+cd vllm-serving
+.\start_vllm.ps1 -Distribution "Ubuntu-22.04" -Model "Qwen/Qwen2.5-0.5B-Instruct"
+```
+
+Use `-Model` with either launcher to override the default. Check that the selected model fits the GPU before starting it.
 
 Then, in a separate terminal, start the UI:
 
@@ -452,18 +548,32 @@ $env:PYTHONPATH="src"
 streamlit run app.py
 ```
 
-### WSL2 venv (vLLM only — separate from Windows)
+If the backend is using the Qwen smoke-test model, choose the UI's custom-model option and enter `Qwen/Qwen2.5-0.5B-Instruct` so the UI and server model IDs match.
+
+### Ubuntu WSL2 venv (vLLM only — separate from Windows)
 
 ```powershell
-# Option 1 — from the repo root:
-cd vllm-serving
-wsl -e bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
+# Install a real Ubuntu distro first; docker-desktop does not count.
+wsl --install -d Ubuntu-22.04
 
-# Option 2 — from anywhere (replace the path if your repo is elsewhere):
-wsl -d Ubuntu-22.04 -- bash -c "cd /mnt/c/Users/$env:USERNAME/source/repos/ai-workbench/vllm-serving && bash setup_vllm.sh"
+# After restart and Ubuntu's first launch, from the repo root:
+cd vllm-serving
+wsl -d Ubuntu-22.04 -- bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
 ```
 
 > **Never install vLLM in the Windows venv.** It pins `transformers<5.0`, which breaks model-serving.
+
+### 4. Stop
+
+Press `Ctrl+C` in the UI and server terminals. For Docker Desktop, stop the named container and then shut down Docker's WSL2 VM when no other containers are needed:
+
+```powershell
+docker stop vllm-server
+docker desktop stop
+wsl --shutdown
+```
+
+For the Ubuntu route, use `wsl --terminate Ubuntu-22.04` after stopping vLLM. See [Stop and Shut Down](#stop-and-shut-down) for details and verification commands.
 
 ---
 
@@ -512,7 +622,7 @@ Collected from research notes, tasks, and daily use:
 
 ## Appendix A: Supported Models
 
-These models are tested and registered in the UI dropdown. Pass any HuggingFace ID to `start_vllm.ps1 -Model` to try others.
+These models are tested and registered in the UI dropdown. Pass any HuggingFace ID to `start-docker.ps1 -Model` or `start_vllm.ps1 -Model` to try others.
 
 | Model | HuggingFace ID | Image | Audio | Video | VRAM (BF16) | vLLM | Windows-Native |
 |---|---|---|---|---|---|---|---|
@@ -533,6 +643,8 @@ All models are downloaded from [HuggingFace Hub](https://huggingface.co/models).
 
 ```powershell
 .\start_vllm.ps1 -Model "org/model-name"
+# or
+.\start-docker.ps1 -Model "org/model-name"
 ```
 
 Community-quantized variants (AWQ, GPTQ) can dramatically reduce VRAM requirements — search HuggingFace for `<model-name> AWQ`. Always test output quality before relying on a quantized repack, as they vary in reliability.

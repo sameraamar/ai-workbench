@@ -8,14 +8,18 @@
     Override the MODEL_ID from .env.vllm. Pass a HuggingFace model ID.
 .PARAMETER Port
     Override the VLLM_PORT from .env.vllm (default: 8000).
+.PARAMETER Distribution
+    WSL distribution that contains the vLLM environment.
 .EXAMPLE
     .\start_vllm.ps1
+    .\start_vllm.ps1 -Distribution "Ubuntu-22.04"
     .\start_vllm.ps1 -Model "google/gemma-4-E4B-it"
     .\start_vllm.ps1 -Model "mistralai/Mistral-Small-3.1-24B-Instruct-2503" -Port 8001
 #>
 param(
     [string]$Model,
-    [int]$Port
+    [int]$Port,
+    [string]$Distribution = "Ubuntu-22.04"
 )
 
 Set-StrictMode -Version Latest
@@ -23,11 +27,26 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = $PSScriptRoot
 
-# --- Check WSL2 is available ------------------------------------------------
+# --- Check the requested WSL2 distribution is available --------------------
 try {
     $null = wsl --status 2>&1
 } catch {
     Write-Error "WSL2 is required but not found. Install it with: wsl --install"
+    exit 1
+}
+
+$installedDistributions = @(
+    wsl --list --quiet 2>$null |
+        ForEach-Object { $_.Replace([string][char]0, "").Trim() } |
+        Where-Object { $_ }
+)
+if ($Distribution -notin $installedDistributions) {
+    Write-Error @"
+WSL distribution '$Distribution' is not installed.
+The 'docker-desktop' distribution is internal to Docker Desktop and cannot be used for this launcher.
+Install Ubuntu with: wsl --install -d $Distribution
+Or use Docker Desktop directly with: .\start-docker.ps1
+"@
     exit 1
 }
 
@@ -61,4 +80,4 @@ Write-Host "Script: $wslScriptDir/start.sh" -ForegroundColor DarkGray
 Write-Host ""
 
 # Make start.sh executable, strip Windows CRLF line endings, and run it
-wsl -e bash -c "chmod +x '$wslScriptDir/start.sh' && cd '$wslScriptDir' && sed -i 's/\r$//' start.sh setup_vllm.sh 2>/dev/null; ${envPrefix}./start.sh"
+wsl -d $Distribution -- bash -c "chmod +x '$wslScriptDir/start.sh' && cd '$wslScriptDir' && sed -i 's/\r$//' start.sh setup_vllm.sh 2>/dev/null; ${envPrefix}./start.sh"

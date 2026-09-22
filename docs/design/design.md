@@ -93,10 +93,12 @@ The repository is split into three independent projects under a single git root.
 
 ```
 ai-sandbox/
-├── vllm-serving/           # vLLM launch scripts and config (WSL2/Linux only)
+├── vllm-serving/           # vLLM launch scripts and config (Docker/WSL2/Linux)
 │   ├── .env.vllm           # vLLM server config (MODEL_ID, port, VRAM, quantization)
 │   ├── start.sh            # Bash launcher for vLLM (WSL2/Linux)
 │   ├── start_vllm.ps1      # Windows PowerShell wrapper (delegates to WSL2)
+│   ├── start-docker.ps1    # Windows PowerShell launcher for Docker Desktop
+│   ├── start-docker.sh     # Bash launcher for Docker on Linux
 │   └── setup_vllm.sh       # One-time vLLM install script for WSL2
 ├── model-serving/          # Model-serving backend (Windows-native Transformers + planning)
 │   ├── src/model_serving/  # Python package
@@ -138,13 +140,14 @@ ai-sandbox/
 ### Layers
 
 1. vLLM layer (`vllm-serving/`)
-   - vLLM runs as a standalone server inside WSL2 (or native Linux), launched via `start.sh`
+   - vLLM runs as a standalone Linux server through Docker Desktop, WSL2 Ubuntu, or native Linux
    - Exposes the OpenAI-compatible API: `POST /v1/chat/completions`, `GET /v1/models`, `GET /health`
    - Supports any model vLLM can load — swap models by changing `MODEL_ID` in `.env.vllm`
    - Auto-detects Mistral models and applies `--tokenizer_mode mistral` flags
    - Memory management handled by vLLM’s PagedAttention — no manual OOM guard
    - Supports AWQ quantization for large models (24B+) on RTX 3090
-   - Windows users launch via `start_vllm.ps1` which delegates to WSL2
+   - Windows users launch directly through Docker Desktop with `start-docker.ps1`, or through a normal Ubuntu distribution with `start_vllm.ps1`
+   - Docker Desktop's internal `docker-desktop` WSL distribution is not a normal Linux environment and must not be used with `setup_vllm.sh`
    - Contains zero Python application code — only shell scripts and config
 
 2. Model-serving layer (`model-serving/`)
@@ -228,7 +231,7 @@ vLLM is ~12× faster in throughput and ~10× faster in TTFT vs the Windows-nativ
 
 - Python for the application language
 - Streamlit for the UI (in `ui/`)
-- vLLM for model serving (runs in WSL2/Linux, exposes OpenAI-compatible API)
+- vLLM for model serving (runs through Docker/WSL2/Linux and exposes an OpenAI-compatible API)
 - httpx for UI-to-serving HTTP communication
 - OpenCV for video frame extraction
 - Pillow and SoundFile for local media handling
@@ -264,7 +267,7 @@ They do not produce pixels, audio waveforms, or rendered video.
 - Cold starts can be lengthy because processor download, model download, and weight loading may all happen on the first request. The UI and logs should report these stages clearly.
 - Local runtime settings should live in `.env`, with `.env.example` as the tracked template. Python path additions should be applied through the environment bootstrap rather than scattered per entrypoint.
 - Adding a second model should only require adding an entry to `model_profiles.py` and setting the `MODEL_ID` in `.env.vllm`. If a change forces UI modifications beyond model_profiles, the architecture needs redesigning first.
-- The backend is dual-mode: vLLM in WSL2 (recommended) or Windows-native Transformers + OpenAI shim. Both expose the same `/v1/chat/completions` API.
+- The backend is dual-mode: vLLM through Docker/WSL2/Linux (recommended) or Windows-native Transformers + OpenAI shim. Both expose the same `/v1/chat/completions` API.
 
 ## Key Architecture Decisions
 
@@ -284,7 +287,7 @@ The hand-rolled Transformers inference stack (~600 lines) reimplemented memory m
 
 ### Dual-mode serving
 
-Single repo, single branch, two backend modes selected at start time. The UI speaks the OpenAI API and never knows which backend is running. vLLM (WSL2/Linux) is recommended for benchmarks, Mistral, and multi-GPU. Windows-native (Transformers + OpenAI shim) is kept for quick iteration without WSL2. Both serve on `localhost:8000` — they are alternatives, not meant to run simultaneously.
+Single repo, single branch, two backend modes selected at start time. The UI speaks the OpenAI API and never knows which backend is running. vLLM (Docker/WSL2/Linux) is recommended for benchmarks, Mistral, and multi-GPU. Windows-native (Transformers + OpenAI shim) is kept for quick iteration without a Linux runtime. Both serve on `localhost:8000` — they are alternatives, not meant to run simultaneously.
 
 ## Testing Strategy
 
@@ -316,16 +319,22 @@ The current target is local prototype usage. Two serving modes are available (se
 ### Mode 1: vLLM (recommended)
 
 ```powershell
-# One-time WSL2 setup (from repo root):
+# Docker Desktop on Windows (no Ubuntu distribution required):
 cd vllm-serving
-wsl -e bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
+$mediaPath = Join-Path (Resolve-Path ..).Path "shared-media"
+.\start-docker.ps1 -Model "Qwen/Qwen2.5-0.5B-Instruct" -SharedMediaDir $mediaPath
 
-# Start vLLM:
-.\start_vllm.ps1                           # default model from .env.vllm
-.\start_vllm.ps1 -Model "org/model-id"     # optional override
+# Or install into a normal Ubuntu WSL2 distribution once:
+wsl --install -d Ubuntu-22.04
+wsl -d Ubuntu-22.04 -- bash -c "chmod +x setup_vllm.sh && bash setup_vllm.sh"
+
+# Then start through Ubuntu:
+.\start_vllm.ps1 -Distribution "Ubuntu-22.04" -Model "org/model-id"
 ```
 
-vLLM config lives in `vllm-serving/.env.vllm`.
+vLLM config lives in `vllm-serving/.env.vllm`. The default Gemma 4 E2B BF16 checkpoint requires more than 8 GB VRAM; use a small smoke-test model or a compatible pre-quantized checkpoint on smaller GPUs.
+
+Stop the active server with `Ctrl+C`. A Docker launch can also be stopped with `docker stop vllm-server`. To release Docker Desktop's remaining WSL2 resources when no other containers are needed, run `docker desktop stop` followed by `wsl --shutdown`. For the Ubuntu route, run `wsl --terminate Ubuntu-22.04` after stopping vLLM.
 
 ### Mode 2: Windows-native (quick iteration, no WSL2)
 
