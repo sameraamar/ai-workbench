@@ -148,6 +148,7 @@ ai-sandbox/
    - Supports AWQ quantization for large models (24B+) on RTX 3090
    - Windows users launch directly through Docker Desktop with `start-docker.ps1`, or through a normal Ubuntu distribution with `start_vllm.ps1`
    - Docker Desktop's internal `docker-desktop` WSL distribution is not a normal Linux environment and must not be used with `setup_vllm.sh`
+   - Upstream vLLM supports multiple accelerator backends, but the repository's documented Windows launchers are NVIDIA/CUDA-specific and require different implementation work for AMD ROCm, Intel XPU, or other backends
    - Contains zero Python application code — only shell scripts and config
 
 2. Model-serving layer (`model-serving/`)

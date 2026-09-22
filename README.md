@@ -66,10 +66,12 @@ This is the core of the repo. Two backends serve the **same OpenAI-compatible AP
 
 vLLM is Linux software and does not run natively on Windows. On Windows, run it through Docker Desktop or a normal Ubuntu WSL2 distribution. These are alternatives; do not install vLLM in the Windows Python virtualenv.
 
+> vLLM itself is not limited to NVIDIA GPUs. Upstream vLLM also supports other accelerator backends in specific environments. However, the Windows launchers documented in this repository are currently **NVIDIA/CUDA-specific**: they use the official CUDA image, Docker's `nvidia` runtime, and `--gpus all`. AMD ROCm, Intel XPU, and other backends require different images/installations and are not covered or tested here.
+
 #### Prerequisites
 
 - Windows 10/11 with WSL2 support and hardware virtualization enabled
-- An NVIDIA GPU, a current NVIDIA Windows driver with WSL2 CUDA support, and enough VRAM for the selected model
+- For the documented Windows launchers: an NVIDIA GPU, a current NVIDIA Windows driver with WSL2 CUDA support, and enough VRAM for the selected model
 - Docker Desktop using Linux containers **or** a normal Ubuntu WSL2 distribution
 - Enough disk for the vLLM runtime and model weights; tens of GB is normal
 - Accepted model terms and an `HF_TOKEN` for gated models such as Gemma 4
@@ -480,7 +482,7 @@ python concurrency_simulation.py --registered-users 100 --active-request-rate 0.
 ### Prerequisites
 
 - Python 3.11+
-- NVIDIA GPU with a current driver and enough VRAM for the selected model
+- For the documented Windows vLLM routes, an NVIDIA GPU with a current driver and enough VRAM for the selected model
 - Docker Desktop **or** Ubuntu on WSL2 for vLLM; neither is required for the Windows-native backend
 - Hugging Face access and a token for gated models
 

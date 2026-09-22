@@ -827,6 +827,7 @@ This file should stay aligned with [docs/design/design.md](./design/design.md) a
 - Notes:
   - The repo default Gemma 4 E2B BF16 model does not fit this 8 GB GPU. README uses ungated `Qwen/Qwen2.5-0.5B-Instruct` for the first runtime smoke test.
   - Docker Desktop's internal `docker-desktop` WSL distribution is an implementation detail, not a replacement for Ubuntu when using `setup_vllm.sh`.
+  - Upstream vLLM is multi-accelerator, but the launchers validated in this task are specifically NVIDIA/CUDA-based; other backends need separate images, setup, and validation.
 - Dependencies: 3.17, 3.20
 
 ### 9.1 Add persistence for run history
